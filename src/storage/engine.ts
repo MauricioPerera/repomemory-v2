@@ -128,6 +128,20 @@ export class StorageEngine {
     return entities;
   }
 
+  listEntitiesByPrefix(prefix: string): Entity[] {
+    const entries = this.lookup.listByPrefix(prefix);
+    const entities: Entity[] = [];
+    for (const [, refPath] of entries) {
+      const ref = this.refs.get(refPath);
+      if (!ref) continue;
+      const commit = this.commits.read(ref.head);
+      if (commit.objectHash === TOMBSTONE) continue;
+      const obj = this.objects.read(commit.objectHash);
+      entities.push(obj.data as Entity);
+    }
+    return entities;
+  }
+
   private refPath(entity: Entity): string {
     const base = this.refBase(entity);
     return `${base}/${entity.id}.ref`;

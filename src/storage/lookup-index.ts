@@ -41,6 +41,19 @@ export class LookupIndex {
     return new Map(this.getScope(scope));
   }
 
+  listByPrefix(prefix: string): Map<string, string> {
+    const result = new Map<string, string>();
+    const files = this.listScopeFiles();
+    for (const scope of files) {
+      if (!scope.startsWith(prefix)) continue;
+      const map = this.getScope(scope);
+      for (const [id, ref] of map) {
+        result.set(id, ref);
+      }
+    }
+    return result;
+  }
+
   findById(entityId: string): string | undefined {
     const cached = this.globalIndex.get(entityId);
     if (cached) return cached;

@@ -9,10 +9,13 @@ RepoMemory provides persistent, versioned memory for AI agents. Every change is 
 - **Content-addressable storage** — automatic deduplication, hash-verified integrity
 - **Immutable history** — every save creates a commit; full audit trail per entity (including deletes)
 - **5 entity types** — Memories, Skills, Knowledge, Sessions, Profiles
+- **Shared scope** — `SHARED_AGENT_ID` (`_shared`) for cross-agent skills and knowledge
+- **Cross-agent profiles** — query a user's profile across all agents
+- **Conversations** — group sessions by `conversationId`
 - **Incremental TF-IDF search** — cached to disk, updated incrementally on writes, Jaccard tag overlap
 - **Deduplication** — `saveOrUpdate()` detects similar content and updates instead of duplicating
 - **Batch operations** — `saveMany()` and `incrementMany()` for bulk writes with single flush
-- **Optional AI** — mining and consolidation via OpenAI, Anthropic, or Ollama (with retry + JSON extraction)
+- **Optional AI** — mining and consolidation (memories, skills, knowledge) via OpenAI, Anthropic, or Ollama
 - **Zero runtime dependencies** — only Node.js built-ins (`node:fs`, `node:path`, `node:crypto`, `fetch`)
 - **Library + CLI** — import as a TypeScript library or use from the command line
 
@@ -125,6 +128,15 @@ mem.skills.save('agent-1', undefined, {
 });
 
 mem.skills.search('agent-1', 'deploy', 10);
+
+// Search including shared skills (from _shared scope)
+mem.skills.search('agent-1', 'deploy', 10, true);
+
+// Save a shared skill (accessible by all agents)
+mem.skills.saveShared({ content: 'Common deploy procedure', tags: ['deploy'] });
+
+// List only shared skills
+mem.skills.listShared();
 ```
 
 ##### `mem.knowledge`
@@ -140,6 +152,13 @@ mem.knowledge.save('agent-1', undefined, {
 });
 
 mem.knowledge.search('agent-1', 'rate limit', 10);
+
+// Search including shared knowledge
+mem.knowledge.search('agent-1', 'rate limit', 10, true);
+
+// Save/list shared knowledge
+mem.knowledge.saveShared({ content: 'Common API docs', tags: ['api'] });
+mem.knowledge.listShared();
 ```
 
 ##### `mem.sessions`
@@ -149,9 +168,17 @@ mem.sessions.save('agent-1', 'user-1', {
   content: 'Full session transcript...',
   startedAt: '2024-01-01T00:00:00Z',  // optional
   endedAt: '2024-01-01T01:00:00Z',    // optional
+  conversationId: 'conv-abc',          // optional — groups related sessions
 });
 
 mem.sessions.markMined('session-id');
+
+// List sessions by conversation
+mem.sessions.listByConversation('agent-1', 'user-1', 'conv-abc');
+
+// List all conversations (grouped summary)
+mem.sessions.listConversations('agent-1', 'user-1');
+// [{ conversationId: 'conv-abc', count: 3, latest: '2024-01-03T...' }, ...]
 ```
 
 ##### `mem.profiles`
@@ -163,6 +190,13 @@ mem.profiles.save('agent-1', 'user-1', {
 });
 
 mem.profiles.getByUser('agent-1', 'user-1');
+
+// Get all profiles for a user across every agent (sorted by updatedAt)
+mem.profiles.getByUserAcrossAgents('user-1');
+
+// Save/get a shared profile (agentId = _shared)
+mem.profiles.saveShared('user-1', { content: 'Global user preferences' });
+mem.profiles.getSharedByUser('user-1');
 ```
 
 #### Flush
@@ -211,9 +245,17 @@ const mem = new RepoMemory({
 const mined = await mem.mine('session-id');
 // { sessionId, memories: [...], skills: [...], profile: {...} }
 
-// Consolidate — merges duplicates, removes outdated memories
+// Consolidate memories — merges duplicates, removes outdated
 const report = await mem.consolidate('agent-1', 'user-1');
 // { agentId, userId, merged: 3, removed: 1, kept: 12 }
+
+// Consolidate skills (agent-scoped, no userId)
+const skillReport = await mem.consolidateSkills('agent-1');
+// { agentId, merged: 2, removed: 0, kept: 5 }
+
+// Consolidate knowledge (agent-scoped, no userId)
+const knowledgeReport = await mem.consolidateKnowledge('agent-1');
+// { agentId, merged: 1, removed: 1, kept: 8 }
 ```
 
 ##### Available Providers
@@ -253,7 +295,7 @@ repomemory snapshot create [label]
 repomemory snapshot list
 repomemory snapshot restore <id>
 repomemory mine <sessionId> [--provider ollama|openai|anthropic] [--model <name>]
-repomemory consolidate --agent <id> --user <id> [--provider ollama] [--model <name>]
+repomemory consolidate --agent <id> [--user <id>] [--type memories|skills|knowledge] [--provider ollama] [--model <name>]
 repomemory stats
 repomemory verify
 ```

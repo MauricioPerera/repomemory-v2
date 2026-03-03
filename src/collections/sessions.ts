@@ -10,12 +10,15 @@ export class SessionCollection extends BaseCollection<Session> {
   }
 
   override save(agentId: string, userId: string | undefined, input: Record<string, unknown>): [Session, CommitInfo] {
-    const normalized = {
+    const normalized: Record<string, unknown> = {
       content: input.content as string,
       mined: (input.mined as boolean) ?? false,
       startedAt: (input.startedAt as string) ?? new Date().toISOString(),
       endedAt: input.endedAt,
     };
+    if (input.conversationId) {
+      normalized.conversationId = input.conversationId;
+    }
     return super.save(agentId, userId, normalized);
   }
 
@@ -23,12 +26,35 @@ export class SessionCollection extends BaseCollection<Session> {
     this.update(entityId, { mined: true });
   }
 
+  listByConversation(agentId: string, userId: string, conversationId: string): Session[] {
+    const all = this.list(agentId, userId);
+    return all.filter(s => s.conversationId === conversationId);
+  }
+
+  listConversations(agentId: string, userId: string): Array<{ conversationId: string; count: number; latest: string }> {
+    const all = this.list(agentId, userId);
+    const groups = new Map<string, { count: number; latest: string }>();
+    for (const s of all) {
+      if (!s.conversationId) continue;
+      const existing = groups.get(s.conversationId);
+      if (existing) {
+        existing.count++;
+        if (s.updatedAt > existing.latest) existing.latest = s.updatedAt;
+      } else {
+        groups.set(s.conversationId, { count: 1, latest: s.updatedAt });
+      }
+    }
+    return Array.from(groups.entries())
+      .map(([conversationId, { count, latest }]) => ({ conversationId, count, latest }))
+      .sort((a, b) => b.latest.localeCompare(a.latest));
+  }
+
   protected searchScope(agentId: string, userId?: string): string {
     return `sessions:${agentId}:${userId ?? ''}`;
   }
 
   protected buildEntity(id: string, agentId: string, userId: string | undefined, input: Record<string, unknown>): Session {
-    return {
+    const entity: Session = {
       type: 'session',
       id,
       agentId,
@@ -40,5 +66,9 @@ export class SessionCollection extends BaseCollection<Session> {
       createdAt: input.createdAt as string,
       updatedAt: input.updatedAt as string,
     };
+    if (input.conversationId) {
+      entity.conversationId = input.conversationId as string;
+    }
+    return entity;
   }
 }

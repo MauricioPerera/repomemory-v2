@@ -1,7 +1,12 @@
 import type { AiProvider, AiMessage } from '../types/ai.js';
 import { RepoMemoryError } from '../types/errors.js';
 import { safeJsonParse } from '../serialization/json.js';
-import { MINING_SYSTEM, MINING_USER, CONSOLIDATION_SYSTEM, CONSOLIDATION_USER } from './prompts.js';
+import {
+  MINING_SYSTEM, MINING_USER,
+  CONSOLIDATION_SYSTEM, CONSOLIDATION_USER,
+  SKILL_CONSOLIDATION_SYSTEM, SKILL_CONSOLIDATION_USER,
+  KNOWLEDGE_CONSOLIDATION_SYSTEM, KNOWLEDGE_CONSOLIDATION_USER,
+} from './prompts.js';
 
 export interface MiningExtraction {
   memories: Array<{ content: string; tags: string[]; category: string }>;
@@ -30,6 +35,22 @@ export class AiService {
     const messages: AiMessage[] = [
       { role: 'system', content: CONSOLIDATION_SYSTEM },
       { role: 'user', content: CONSOLIDATION_USER(memoriesJson) },
+    ];
+    return this.parseJsonWithRetry<ConsolidationPlan>(messages);
+  }
+
+  async planSkillConsolidation(skillsJson: string): Promise<ConsolidationPlan> {
+    const messages: AiMessage[] = [
+      { role: 'system', content: SKILL_CONSOLIDATION_SYSTEM },
+      { role: 'user', content: SKILL_CONSOLIDATION_USER(skillsJson) },
+    ];
+    return this.parseJsonWithRetry<ConsolidationPlan>(messages);
+  }
+
+  async planKnowledgeConsolidation(knowledgeJson: string): Promise<ConsolidationPlan> {
+    const messages: AiMessage[] = [
+      { role: 'system', content: KNOWLEDGE_CONSOLIDATION_SYSTEM },
+      { role: 'user', content: KNOWLEDGE_CONSOLIDATION_USER(knowledgeJson) },
     ];
     return this.parseJsonWithRetry<ConsolidationPlan>(messages);
   }

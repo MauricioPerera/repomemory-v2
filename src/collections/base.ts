@@ -129,6 +129,33 @@ export abstract class BaseCollection<T extends Entity> {
     return scored.slice(0, limit);
   }
 
+  findMultiScope(scopes: string[], query: string, limit = 10): SearchResult<T>[] {
+    const ranked = this.searchEngine.rankMultiScope(scopes, query, limit * 3);
+    const queryTags = query.toLowerCase().split(/\s+/).filter(t => t.length > 1);
+    const now = new Date();
+
+    const scored: SearchResult<T>[] = [];
+    for (const { id, tfidfScore } of ranked) {
+      const entity = this.get(id);
+      if (!entity) continue;
+
+      const tags = 'tags' in entity ? (entity.tags as string[]) : [];
+      const accessCount = 'accessCount' in entity ? (entity.accessCount as number) : 0;
+
+      const score = computeScore({
+        tfidfScore,
+        tagOverlap: computeTagOverlap(tags, queryTags),
+        daysSinceUpdate: daysBetween(entity.updatedAt, now),
+        accessCount,
+      });
+
+      scored.push({ entity, score });
+    }
+
+    scored.sort((a, b) => b.score - a.score);
+    return scored.slice(0, limit);
+  }
+
   history(entityId: string): CommitInfo[] {
     return this.storage.history(entityId);
   }

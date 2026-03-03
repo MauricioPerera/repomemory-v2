@@ -1,7 +1,7 @@
 import type { AiProvider } from '../types/ai.js';
 import type { RepoMemory } from '../index.js';
-import type { ConsolidationReport } from '../types/results.js';
-import type { Memory } from '../types/entities.js';
+import type { ConsolidationReport, SkillConsolidationReport, KnowledgeConsolidationReport } from '../types/results.js';
+import type { Memory, Skill, Knowledge } from '../types/entities.js';
 import { AiService } from '../ai/service.js';
 
 const CHUNK_SIZE = 20;
@@ -93,6 +93,168 @@ export class ConsolidationPipeline {
       groups.set(m.category, group);
     }
     return groups;
+  }
+
+  private chunk<T>(arr: T[], size: number): T[][] {
+    const chunks: T[][] = [];
+    for (let i = 0; i < arr.length; i += size) {
+      chunks.push(arr.slice(i, i + size));
+    }
+    return chunks;
+  }
+}
+
+export class SkillConsolidationPipeline {
+  private readonly aiService: AiService;
+
+  constructor(provider: AiProvider, private readonly repo: RepoMemory) {
+    this.aiService = new AiService(provider);
+  }
+
+  async run(agentId: string): Promise<SkillConsolidationReport> {
+    const skills = this.repo.skills.list(agentId);
+    if (skills.length < 2) {
+      return { agentId, merged: 0, removed: 0, kept: skills.length };
+    }
+
+    const groups = this.groupByCategory(skills);
+    let totalMerged = 0;
+    let totalRemoved = 0;
+    let totalKept = 0;
+
+    for (const group of groups.values()) {
+      const chunks = this.chunk(group, CHUNK_SIZE);
+      for (const chunk of chunks) {
+        const result = await this.processChunk(agentId, chunk);
+        totalMerged += result.merged;
+        totalRemoved += result.removed;
+        totalKept += result.kept;
+      }
+    }
+
+    return { agentId, merged: totalMerged, removed: totalRemoved, kept: totalKept };
+  }
+
+  private async processChunk(
+    agentId: string,
+    skills: Skill[],
+  ): Promise<{ merged: number; removed: number; kept: number }> {
+    if (skills.length < 2) {
+      return { merged: 0, removed: 0, kept: skills.length };
+    }
+
+    const skillsJson = JSON.stringify(
+      skills.map(s => ({ id: s.id, content: s.content, tags: s.tags, category: s.category })),
+      null,
+      2,
+    );
+
+    const plan = await this.aiService.planSkillConsolidation(skillsJson);
+
+    let merged = 0;
+    let removed = 0;
+
+    for (const merge of plan.merge) {
+      this.repo.skills.save(agentId, undefined, {
+        content: merge.merged.content,
+        tags: merge.merged.tags,
+        category: merge.merged.category ?? 'procedure',
+      });
+      for (const srcId of merge.sourceIds) {
+        try { this.repo.skills.delete(srcId); } catch { /* already deleted */ }
+      }
+      merged += merge.sourceIds.length;
+    }
+
+    for (const removeId of plan.remove) {
+      try { this.repo.skills.delete(removeId); removed++; } catch { /* already deleted */ }
+    }
+
+    return { merged, removed, kept: plan.keep.length };
+  }
+
+  private groupByCategory(skills: Skill[]): Map<string, Skill[]> {
+    const groups = new Map<string, Skill[]>();
+    for (const s of skills) {
+      const group = groups.get(s.category) ?? [];
+      group.push(s);
+      groups.set(s.category, group);
+    }
+    return groups;
+  }
+
+  private chunk<T>(arr: T[], size: number): T[][] {
+    const chunks: T[][] = [];
+    for (let i = 0; i < arr.length; i += size) {
+      chunks.push(arr.slice(i, i + size));
+    }
+    return chunks;
+  }
+}
+
+export class KnowledgeConsolidationPipeline {
+  private readonly aiService: AiService;
+
+  constructor(provider: AiProvider, private readonly repo: RepoMemory) {
+    this.aiService = new AiService(provider);
+  }
+
+  async run(agentId: string): Promise<KnowledgeConsolidationReport> {
+    const items = this.repo.knowledge.list(agentId);
+    if (items.length < 2) {
+      return { agentId, merged: 0, removed: 0, kept: items.length };
+    }
+
+    const chunks = this.chunk(items, CHUNK_SIZE);
+    let totalMerged = 0;
+    let totalRemoved = 0;
+    let totalKept = 0;
+
+    for (const chunk of chunks) {
+      const result = await this.processChunk(agentId, chunk);
+      totalMerged += result.merged;
+      totalRemoved += result.removed;
+      totalKept += result.kept;
+    }
+
+    return { agentId, merged: totalMerged, removed: totalRemoved, kept: totalKept };
+  }
+
+  private async processChunk(
+    agentId: string,
+    items: Knowledge[],
+  ): Promise<{ merged: number; removed: number; kept: number }> {
+    if (items.length < 2) {
+      return { merged: 0, removed: 0, kept: items.length };
+    }
+
+    const knowledgeJson = JSON.stringify(
+      items.map(k => ({ id: k.id, content: k.content, tags: k.tags, source: k.source })),
+      null,
+      2,
+    );
+
+    const plan = await this.aiService.planKnowledgeConsolidation(knowledgeJson);
+
+    let merged = 0;
+    let removed = 0;
+
+    for (const merge of plan.merge) {
+      this.repo.knowledge.save(agentId, undefined, {
+        content: merge.merged.content,
+        tags: merge.merged.tags,
+      });
+      for (const srcId of merge.sourceIds) {
+        try { this.repo.knowledge.delete(srcId); } catch { /* already deleted */ }
+      }
+      merged += merge.sourceIds.length;
+    }
+
+    for (const removeId of plan.remove) {
+      try { this.repo.knowledge.delete(removeId); removed++; } catch { /* already deleted */ }
+    }
+
+    return { merged, removed, kept: plan.keep.length };
   }
 
   private chunk<T>(arr: T[], size: number): T[][] {

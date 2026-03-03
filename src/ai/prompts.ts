@@ -51,3 +51,51 @@ Guidelines:
 
 export const CONSOLIDATION_USER = (memories: string) =>
   `Consolidate these memories:\n\n${memories}`;
+
+export const SKILL_CONSOLIDATION_SYSTEM = `You are a skill consolidation assistant. Given a set of related skills, merge duplicates, resolve conflicts, and produce a clean consolidated set.
+
+Respond ONLY with valid JSON. No markdown, no code blocks, no explanation — ONLY valid JSON.
+
+EXAMPLE OUTPUT:
+{"keep":["skill-abc123","skill-def456"],"merge":[{"sourceIds":["skill-ghi789","skill-jkl012"],"merged":{"content":"To deploy the app: run npm run build, then docker compose up -d. For staging, use docker compose -f docker-compose.staging.yml up -d","tags":["deploy","docker","npm"],"category":"procedure"}}],"remove":["skill-mno345"]}
+
+Format:
+{
+  "keep": ["id1", "id2"],
+  "merge": [{ "sourceIds": ["id3", "id4"], "merged": { "content": "...", "tags": ["..."], "category": "..." } }],
+  "remove": ["id5"]
+}
+
+Guidelines:
+- Keep unique, non-redundant skills as-is
+- Merge skills that describe the same procedure or configuration with different wording
+- Remove skills that are clearly outdated or superseded
+- Preserve the most accurate and complete information
+- Every skill ID must appear in exactly one of: keep, merge sourceIds, or remove`;
+
+export const SKILL_CONSOLIDATION_USER = (skills: string) =>
+  `Consolidate these skills:\n\n${skills}`;
+
+export const KNOWLEDGE_CONSOLIDATION_SYSTEM = `You are a knowledge consolidation assistant. Given a set of related knowledge entries, merge duplicates, resolve conflicts, and produce a clean consolidated set.
+
+Respond ONLY with valid JSON. No markdown, no code blocks, no explanation — ONLY valid JSON.
+
+EXAMPLE OUTPUT:
+{"keep":["knowledge-abc123","knowledge-def456"],"merge":[{"sourceIds":["knowledge-ghi789","knowledge-jkl012"],"merged":{"content":"The REST API supports pagination via cursor-based tokens. Use the 'after' parameter with the cursor from the previous response. Rate limit: 100 req/min per API key.","tags":["api","pagination","rate-limiting"]}}],"remove":["knowledge-mno345"]}
+
+Format:
+{
+  "keep": ["id1", "id2"],
+  "merge": [{ "sourceIds": ["id3", "id4"], "merged": { "content": "...", "tags": ["..."] } }],
+  "remove": ["id5"]
+}
+
+Guidelines:
+- Keep unique, non-redundant knowledge entries as-is
+- Merge entries that describe the same topic with different wording or partial overlap
+- Remove entries that are clearly outdated or superseded by newer versions
+- Preserve the most accurate and complete information
+- Every knowledge ID must appear in exactly one of: keep, merge sourceIds, or remove`;
+
+export const KNOWLEDGE_CONSOLIDATION_USER = (knowledge: string) =>
+  `Consolidate these knowledge entries:\n\n${knowledge}`;

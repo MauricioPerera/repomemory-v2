@@ -20,6 +20,20 @@ export interface ConsolidationReport {
   kept: number;
 }
 
+export interface SkillConsolidationReport {
+  agentId: string;
+  merged: number;
+  removed: number;
+  kept: number;
+}
+
+export interface KnowledgeConsolidationReport {
+  agentId: string;
+  merged: number;
+  removed: number;
+  kept: number;
+}
+
 export interface CommitInfo {
   hash: string;
   parent: string | null;

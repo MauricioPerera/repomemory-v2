@@ -39,6 +39,21 @@ export class SearchEngine {
     return results.map(r => ({ id: r.id, tfidfScore: r.score }));
   }
 
+  rankMultiScope(scopes: string[], query: string, limit: number): Array<{ id: string; tfidfScore: number }> {
+    const merged = new Map<string, number>();
+    for (const scope of scopes) {
+      const results = this.rank(scope, query, limit);
+      for (const { id, tfidfScore } of results) {
+        const existing = merged.get(id) ?? 0;
+        if (tfidfScore > existing) merged.set(id, tfidfScore);
+      }
+    }
+    return Array.from(merged.entries())
+      .map(([id, tfidfScore]) => ({ id, tfidfScore }))
+      .sort((a, b) => b.tfidfScore - a.tfidfScore)
+      .slice(0, limit);
+  }
+
   flush(): void {
     for (const scope of this.dirty) {
       this.persistIndex(scope);

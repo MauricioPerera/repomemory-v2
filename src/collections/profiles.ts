@@ -1,5 +1,6 @@
 import { BaseCollection } from './base.js';
 import type { Profile } from '../types/entities.js';
+import { SHARED_AGENT_ID } from '../types/entities.js';
 import type { CommitInfo } from '../types/results.js';
 import type { StorageEngine } from '../storage/engine.js';
 import type { SearchEngine } from '../search/search-engine.js';
@@ -22,6 +23,24 @@ export class ProfileCollection extends BaseCollection<Profile> {
     if (profiles.length === 0) return null;
     if (profiles.length === 1) return profiles[0];
     return profiles.reduce((a, b) => a.updatedAt > b.updatedAt ? a : b);
+  }
+
+  getByUserAcrossAgents(userId: string): Profile[] {
+    const prefix = `profiles:`;
+    const entities = this.storage.listEntitiesByPrefix(prefix);
+    const profiles = entities.filter(
+      (e): e is Profile => e.type === 'profile' && e.userId === userId,
+    );
+    profiles.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    return profiles;
+  }
+
+  saveShared(userId: string, input: Record<string, unknown>): [Profile, CommitInfo] {
+    return this.save(SHARED_AGENT_ID, userId, input);
+  }
+
+  getSharedByUser(userId: string): Profile | null {
+    return this.getByUser(SHARED_AGENT_ID, userId);
   }
 
   protected searchScope(agentId: string, userId?: string): string {

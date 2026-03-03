@@ -10,7 +10,7 @@ import { ProfileCollection } from './collections/profiles.js';
 import type { RepoMemoryConfig } from './types/config.js';
 import type { AiProvider } from './types/ai.js';
 import type { SnapshotInfo, VerifyResult } from './types/results.js';
-import type { MiningResult, ConsolidationReport } from './types/results.js';
+import type { MiningResult, ConsolidationReport, SkillConsolidationReport, KnowledgeConsolidationReport } from './types/results.js';
 import { RepoMemoryError } from './types/errors.js';
 
 export class RepoMemory {
@@ -79,6 +79,24 @@ export class RepoMemory {
     return pipeline.run(agentId, userId);
   }
 
+  async consolidateSkills(agentId: string): Promise<SkillConsolidationReport> {
+    if (!this.ai) {
+      throw new RepoMemoryError('AI_NOT_CONFIGURED', 'AI provider required for consolidation');
+    }
+    const { SkillConsolidationPipeline } = await import('./pipelines/consolidation.js');
+    const pipeline = new SkillConsolidationPipeline(this.ai, this);
+    return pipeline.run(agentId);
+  }
+
+  async consolidateKnowledge(agentId: string): Promise<KnowledgeConsolidationReport> {
+    if (!this.ai) {
+      throw new RepoMemoryError('AI_NOT_CONFIGURED', 'AI provider required for consolidation');
+    }
+    const { KnowledgeConsolidationPipeline } = await import('./pipelines/consolidation.js');
+    const pipeline = new KnowledgeConsolidationPipeline(this.ai, this);
+    return pipeline.run(agentId);
+  }
+
   verify(): VerifyResult {
     const errors: string[] = [];
     const allObjects = this.storage.objects.listAll();
@@ -124,9 +142,10 @@ export class RepoMemory {
 
 // Re-exports
 export type { RepoMemoryConfig } from './types/config.js';
+export { SHARED_AGENT_ID } from './types/entities.js';
 export type { Memory, Skill, Knowledge, Session, Profile, Entity, EntityType } from './types/entities.js';
 export type { SaveMemoryInput, SaveSkillInput, SaveKnowledgeInput, SaveSessionInput, SaveProfileInput } from './types/entities.js';
-export type { SearchResult, CommitInfo, RefInfo, SnapshotInfo, VerifyResult, MiningResult, ConsolidationReport } from './types/results.js';
+export type { SearchResult, CommitInfo, RefInfo, SnapshotInfo, VerifyResult, MiningResult, ConsolidationReport, SkillConsolidationReport, KnowledgeConsolidationReport } from './types/results.js';
 export type { AiProvider, AiMessage } from './types/ai.js';
 export { RepoMemoryError } from './types/errors.js';
 export type { ErrorCode } from './types/errors.js';

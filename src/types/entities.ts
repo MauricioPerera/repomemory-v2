@@ -1,3 +1,5 @@
+export const SHARED_AGENT_ID = '_shared';
+
 export type MemoryCategory = 'fact' | 'decision' | 'issue' | 'task';
 export type SkillCategory = 'procedure' | 'configuration' | 'troubleshooting' | 'workflow';
 export type SkillStatus = 'active' | 'deprecated' | 'draft';
@@ -49,6 +51,7 @@ export interface Session extends BaseEntity {
   mined: boolean;
   startedAt: string;
   endedAt?: string;
+  conversationId?: string;
 }
 
 export interface Profile extends BaseEntity {
@@ -89,6 +92,7 @@ export interface SaveSessionInput {
   content: string;
   startedAt?: string;
   endedAt?: string;
+  conversationId?: string;
 }
 
 export interface SaveProfileInput {

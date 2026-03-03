@@ -3,10 +3,11 @@ import type { Skill } from '../types/entities.js';
 import type { SearchResult, CommitInfo } from '../types/results.js';
 import type { StorageEngine } from '../storage/engine.js';
 import type { SearchEngine } from '../search/search-engine.js';
+import type { AccessTracker } from '../storage/access-tracker.js';
 
 export class SkillCollection extends BaseCollection<Skill> {
-  constructor(storage: StorageEngine, search: SearchEngine) {
-    super(storage, search, 'skill');
+  constructor(storage: StorageEngine, search: SearchEngine, accessTracker?: AccessTracker) {
+    super(storage, search, 'skill', accessTracker);
   }
 
   override save(agentId: string, _userId: string | undefined, input: Record<string, unknown>): [Skill, CommitInfo] {

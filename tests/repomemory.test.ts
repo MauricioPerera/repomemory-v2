@@ -49,6 +49,32 @@ describe('RepoMemory', () => {
       const history = mem.memories.history(saved.id);
       expect(history.length).toBe(2);
     });
+
+    it('shows history after delete', () => {
+      const [saved] = mem.memories.save('a1', 'u1', { content: 'v1' });
+      mem.memories.update(saved.id, { content: 'v2' });
+      mem.memories.delete(saved.id);
+      const history = mem.memories.history(saved.id);
+      expect(history.length).toBe(3);
+      expect(history[0].message).toBe('delete memory');
+    });
+
+    it('search does not generate extra commits', () => {
+      mem.memories.save('a1', 'u1', { content: 'TypeScript config tips', tags: ['ts'] });
+      mem.memories.save('a1', 'u1', { content: 'TypeScript testing patterns', tags: ['ts'] });
+      const commitsBefore = mem.stats().commits;
+      mem.memories.search('a1', 'u1', 'TypeScript');
+      const commitsAfter = mem.stats().commits;
+      expect(commitsAfter).toBe(commitsBefore);
+    });
+
+    it('tracks access counts via side-index', () => {
+      const [saved] = mem.memories.save('a1', 'u1', { content: 'TypeScript patterns', tags: ['ts'] });
+      mem.memories.search('a1', 'u1', 'TypeScript');
+      mem.memories.search('a1', 'u1', 'TypeScript');
+      const loaded = mem.memories.get(saved.id);
+      expect(loaded!.accessCount).toBe(2);
+    });
   });
 
   describe('skills', () => {
@@ -107,6 +133,13 @@ describe('RepoMemory', () => {
       const s = mem.stats();
       expect(s.memories).toBe(1);
       expect(s.objects).toBeGreaterThan(0);
+    });
+  });
+
+  describe('flush', () => {
+    it('is callable as public method', () => {
+      mem.memories.save('a1', 'u1', { content: 'test' });
+      expect(() => mem.flush()).not.toThrow();
     });
   });
 

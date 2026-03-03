@@ -6,7 +6,7 @@ import type { SearchEngine } from '../search/search-engine.js';
 
 export class ProfileCollection extends BaseCollection<Profile> {
   constructor(storage: StorageEngine, search: SearchEngine) {
-    super(storage, search, 'profile');
+    super(storage, search, 'profile', undefined);
   }
 
   override save(agentId: string, userId: string | undefined, input: Record<string, unknown>): [Profile, CommitInfo] {
@@ -19,7 +19,9 @@ export class ProfileCollection extends BaseCollection<Profile> {
 
   getByUser(agentId: string, userId: string): Profile | null {
     const profiles = this.list(agentId, userId);
-    return profiles[0] ?? null;
+    if (profiles.length === 0) return null;
+    if (profiles.length === 1) return profiles[0];
+    return profiles.reduce((a, b) => a.updatedAt > b.updatedAt ? a : b);
   }
 
   protected searchScope(agentId: string, userId?: string): string {

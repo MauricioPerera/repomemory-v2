@@ -7,10 +7,12 @@ RepoMemory provides persistent, versioned memory for AI agents. Every change is 
 ## Features
 
 - **Content-addressable storage** — automatic deduplication, hash-verified integrity
-- **Immutable history** — every save creates a commit; full audit trail per entity
+- **Immutable history** — every save creates a commit; full audit trail per entity (including deletes)
 - **5 entity types** — Memories, Skills, Knowledge, Sessions, Profiles
-- **Incremental TF-IDF search** — cached to disk, updated incrementally on writes
-- **Optional AI** — mining and consolidation via OpenAI, Anthropic, or Ollama
+- **Incremental TF-IDF search** — cached to disk, updated incrementally on writes, Jaccard tag overlap
+- **Deduplication** — `saveOrUpdate()` detects similar content and updates instead of duplicating
+- **Batch operations** — `saveMany()` and `incrementMany()` for bulk writes with single flush
+- **Optional AI** — mining and consolidation via OpenAI, Anthropic, or Ollama (with retry + JSON extraction)
 - **Zero runtime dependencies** — only Node.js built-ins (`node:fs`, `node:path`, `node:crypto`, `fetch`)
 - **Library + CLI** — import as a TypeScript library or use from the command line
 
@@ -77,11 +79,14 @@ Each collection provides CRUD + search:
 | Method | Signature | Returns |
 |--------|-----------|---------|
 | `save` | `(agentId, userId?, input)` | `[Entity, CommitInfo]` |
+| `saveMany` | `(items[])` | `[Entity, CommitInfo][]` |
 | `get` | `(entityId)` | `Entity \| null` |
 | `update` | `(entityId, updates)` | `[Entity, CommitInfo]` |
 | `delete` | `(entityId)` | `CommitInfo` |
 | `list` | `(agentId, userId?)` | `Entity[]` |
 | `history` | `(entityId)` | `CommitInfo[]` |
+
+`mem.memories` also has `saveOrUpdate(agentId, userId, input)` which deduplicates automatically, and `search()` which tracks access counts.
 
 ##### `mem.memories`
 
@@ -94,6 +99,19 @@ mem.memories.save('agent-1', 'user-1', {
 });
 
 mem.memories.search('agent-1', 'user-1', 'typescript', 10);
+
+// Save or update (deduplicates automatically)
+const [entity, commit, { deduplicated }] = mem.memories.saveOrUpdate('agent-1', 'user-1', {
+  content: 'User prefers TypeScript strict mode with noUncheckedIndexedAccess',
+  tags: ['preferences', 'typescript'],
+  category: 'fact',
+});
+
+// Batch save (single flush at end — faster for bulk inserts)
+mem.memories.saveMany([
+  { agentId: 'agent-1', userId: 'user-1', input: { content: '...', tags: ['a'] } },
+  { agentId: 'agent-1', userId: 'user-1', input: { content: '...', tags: ['b'] } },
+]);
 ```
 
 ##### `mem.skills`
@@ -147,7 +165,18 @@ mem.profiles.save('agent-1', 'user-1', {
 mem.profiles.getByUser('agent-1', 'user-1');
 ```
 
+#### Flush
+
+Call `flush()` to persist search indices and access counts to disk. This is called automatically on individual `save()`/`update()`/`delete()`, but if you use batch operations or search (which tracks access counts), call it explicitly:
+
+```ts
+mem.memories.search('agent-1', 'user-1', 'query');  // increments access counts in memory
+mem.flush();  // writes search indices + access counts to disk
+```
+
 #### Snapshots
+
+Snapshots create a full point-in-time copy (objects, commits, refs, indices):
 
 ```ts
 const snap = mem.snapshot('before-migration');
@@ -248,8 +277,9 @@ All commands accept `--dir <path>` to specify the storage directory (default: `.
     profiles/{agentId}/{userId}.ref
   index/
     tfidf/                         # Serialized TF-IDF indices
-    lookup/                        # id → refPath mappings
-  snapshots/                       # Point-in-time snapshots
+    lookup/                        # id → refPath mappings (with global reverse index)
+    access-counts.json             # Access count side-index
+  snapshots/                       # Point-in-time snapshots (full copy)
   log/operations.jsonl             # Append-only audit log
 ```
 
@@ -262,7 +292,7 @@ All commands accept `--dir <path>` to specify the storage directory (default: `.
 5. Lookup index and TF-IDF index updated incrementally
 6. Operation appended to audit log
 
-Deletes create a tombstone commit (`objectHash: "TOMBSTONE"`). The ref is removed but the commit chain is preserved.
+Deletes create a tombstone commit (`objectHash: "TOMBSTONE"`). The ref points to the tombstone commit and the full commit chain is preserved, so `history()` works after deletion.
 
 ## Search Scoring
 
@@ -271,12 +301,15 @@ Scoring combines relevance, time decay, and access frequency:
 ```
 score = relevance × decay × accessBoost
 
-relevance  = tfidfScore × 0.7 + tagOverlap × 0.3
-decay      = e^(-0.005 × daysSinceUpdate)
+relevance   = tfidfScore × 0.7 + tagOverlap × 0.3
+tagOverlap  = |intersection| / |union|    (Jaccard similarity)
+decay       = e^(-0.005 × daysSinceUpdate)
 accessBoost = 1 + log₂(1 + accessCount)
 ```
 
 The TF-IDF index is cached to disk and updated incrementally — no full rebuild on each search.
+
+**Note:** The combined score is not normalized to [0, 1]. TF-IDF values depend on corpus size and term distribution, and `accessBoost` amplifies the score further. Keep this in mind when setting absolute thresholds (e.g., dedup uses 0.2).
 
 ## Development
 

@@ -32,6 +32,26 @@ describe('computeTagOverlap', () => {
   it('returns 0 for empty query tags', () => {
     expect(computeTagOverlap(['a'], [])).toBe(0);
   });
+
+  it('returns 0 for empty entity tags', () => {
+    expect(computeTagOverlap([], ['a'])).toBe(0);
+  });
+
+  it('jaccard for long queries', () => {
+    // 1 match, union = {a,b,c,d} = 4 → 1/4 = 0.25
+    expect(computeTagOverlap(['a'], ['a', 'b', 'c', 'd'])).toBe(0.25);
+  });
+
+  it('jaccard for long entity tags', () => {
+    // 1 match, union = {a,b,c,d} = 4 → 1/4 = 0.25
+    expect(computeTagOverlap(['a', 'b', 'c', 'd'], ['a'])).toBe(0.25);
+  });
+
+  it('partial overlap jaccard', () => {
+    // 2 matches, union = {a,b,c,d,e} = 5 → 2/5 = 0.4
+    const score = computeTagOverlap(['a', 'b', 'c', 'd'], ['a', 'b', 'e']);
+    expect(score).toBeCloseTo(2 / 5);
+  });
 });
 
 describe('daysBetween', () => {

@@ -6,7 +6,7 @@ import type { SearchEngine } from '../search/search-engine.js';
 
 export class SessionCollection extends BaseCollection<Session> {
   constructor(storage: StorageEngine, search: SearchEngine) {
-    super(storage, search, 'session');
+    super(storage, search, 'session', undefined);
   }
 
   override save(agentId: string, userId: string | undefined, input: Record<string, unknown>): [Session, CommitInfo] {

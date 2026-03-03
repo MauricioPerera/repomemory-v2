@@ -1,14 +1,14 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { TfIdfIndex } from './tfidf.js';
-import { computeScore, computeTagOverlap, daysBetween } from './scoring.js';
 import { safeJsonParse, safeJsonStringify } from '../serialization/json.js';
+import { atomicWriteFileSync } from '../storage/atomic-write.js';
 import type { Entity } from '../types/entities.js';
-import type { SearchResult } from '../types/results.js';
 import type { TfIdfSerialized } from './tfidf.js';
 
 export class SearchEngine {
   private indices = new Map<string, TfIdfIndex>();
+  private dirty = new Set<string>();
   private readonly cacheDir: string;
 
   constructor(baseDir: string) {
@@ -23,44 +23,27 @@ export class SearchEngine {
     const index = this.getIndex(scope);
     const text = this.extractText(entity);
     index.addDocument(entity.id, text);
-    this.persistIndex(scope);
+    this.dirty.add(scope);
   }
 
   removeEntity(scope: string, entityId: string): void {
     const index = this.getIndex(scope);
     if (index.removeDocument(entityId)) {
-      this.persistIndex(scope);
+      this.dirty.add(scope);
     }
   }
 
-  search(scope: string, query: string, entities: Entity[], limit = 10): SearchResult[] {
+  rank(scope: string, query: string, limit: number): Array<{ id: string; tfidfScore: number }> {
     const index = this.getIndex(scope);
-    const tfidfResults = index.search(query, limit * 3);
-    const entityMap = new Map(entities.map(e => [e.id, e]));
-    const queryTags = query.toLowerCase().split(/\s+/).filter(t => t.length > 1);
-    const now = new Date();
+    const results = index.search(query, limit);
+    return results.map(r => ({ id: r.id, tfidfScore: r.score }));
+  }
 
-    const scored: SearchResult[] = [];
-    for (const { id, score: tfidfScore } of tfidfResults) {
-      const entity = entityMap.get(id);
-      if (!entity) continue;
-
-      const tags = 'tags' in entity ? (entity.tags as string[]) : [];
-      const accessCount = 'accessCount' in entity ? (entity.accessCount as number) : 0;
-      const updatedAt = entity.updatedAt;
-
-      const score = computeScore({
-        tfidfScore,
-        tagOverlap: computeTagOverlap(tags, queryTags),
-        daysSinceUpdate: daysBetween(updatedAt, now),
-        accessCount,
-      });
-
-      scored.push({ entity, score });
+  flush(): void {
+    for (const scope of this.dirty) {
+      this.persistIndex(scope);
     }
-
-    scored.sort((a, b) => b.score - a.score);
-    return scored.slice(0, limit);
+    this.dirty.clear();
   }
 
   private getIndex(scope: string): TfIdfIndex {
@@ -81,7 +64,7 @@ export class SearchEngine {
     const index = this.indices.get(scope);
     if (!index) return;
     const cachePath = this.cachePath(scope);
-    writeFileSync(cachePath, safeJsonStringify(index.serialize()), 'utf8');
+    atomicWriteFileSync(cachePath, safeJsonStringify(index.serialize()));
   }
 
   private cachePath(scope: string): string {

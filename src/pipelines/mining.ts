@@ -23,7 +23,7 @@ export class MiningPipeline {
     const skills: Skill[] = [];
 
     for (const m of extraction.memories) {
-      const [saved] = this.repo.memories.save(session.agentId, session.userId, {
+      const [saved] = this.repo.memories.saveOrUpdate(session.agentId, session.userId, {
         content: m.content,
         tags: m.tags,
         category: m.category as Memory['category'],

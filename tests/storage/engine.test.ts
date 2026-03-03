@@ -49,6 +49,17 @@ describe('StorageEngine', () => {
     expect(engine.load('mem-2')).toBeNull();
   });
 
+  it('preserves history after delete', () => {
+    const mem = makeMemory('mem-del-hist');
+    engine.save(mem);
+    const updated = { ...mem, content: 'updated', updatedAt: new Date().toISOString() };
+    engine.save(updated);
+    engine.delete(updated);
+    const history = engine.history('mem-del-hist');
+    expect(history.length).toBe(3); // create + update + delete
+    expect(history[0].message).toBe('delete memory');
+  });
+
   it('preserves history after update', () => {
     const mem = makeMemory('mem-3');
     engine.save(mem);

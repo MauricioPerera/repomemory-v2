@@ -23,8 +23,8 @@ export class SnapshotManager {
     const snapDir = join(this.dir, id);
     mkdirSync(snapDir, { recursive: true });
 
-    // Copy refs, index, VERSION
-    for (const sub of ['refs', 'index', 'VERSION']) {
+    // Copy refs, index, objects, commits, VERSION
+    for (const sub of ['refs', 'index', 'objects', 'commits', 'VERSION']) {
       const src = join(this.baseDir, sub);
       if (existsSync(src)) {
         cpSync(src, join(snapDir, sub), { recursive: true });
@@ -51,8 +51,8 @@ export class SnapshotManager {
       throw new RepoMemoryError('NOT_FOUND', `Snapshot not found: ${snapshotId}`);
     }
 
-    // Remove current refs and index, replace with snapshot
-    for (const sub of ['refs', 'index']) {
+    // Remove current refs, index, objects, commits — replace with snapshot
+    for (const sub of ['refs', 'index', 'objects', 'commits']) {
       const target = join(this.baseDir, sub);
       if (existsSync(target)) rmSync(target, { recursive: true });
       const src = join(snapDir, sub);

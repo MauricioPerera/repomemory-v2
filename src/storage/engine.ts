@@ -89,9 +89,7 @@ export class StorageEngine {
       throw new RepoMemoryError('NOT_FOUND', `Entity not found: ${entity.id}`);
     }
     const commit = this.commits.create(existingRef.head, TOMBSTONE, author, `delete ${entity.type}`);
-    this.refs.delete(refPath);
-    const scope = this.lookupScope(entity);
-    this.lookup.delete(scope, entity.id);
+    this.refs.set(refPath, commit.hash);  // point ref to tombstone commit
     this.audit.append({
       operation: 'delete',
       entityType: entity.type,

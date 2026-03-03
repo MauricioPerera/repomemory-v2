@@ -14,10 +14,11 @@ export function computeScore(params: ScoringParams): number {
 }
 
 export function computeTagOverlap(entityTags: string[], queryTags: string[]): number {
-  if (queryTags.length === 0) return 0;
-  const set = new Set(queryTags);
-  const matches = entityTags.filter(t => set.has(t)).length;
-  return matches / queryTags.length;
+  if (queryTags.length === 0 || entityTags.length === 0) return 0;
+  const querySet = new Set(queryTags);
+  const matches = entityTags.filter(t => querySet.has(t)).length;
+  const union = new Set([...entityTags, ...queryTags]).size;
+  return matches / union;
 }
 
 export function daysBetween(a: string | Date, b: string | Date): number {

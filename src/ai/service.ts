@@ -23,8 +23,7 @@ export class AiService {
       { role: 'system', content: MINING_SYSTEM },
       { role: 'user', content: MINING_USER(sessionContent) },
     ];
-    const response = await this.provider.chat(messages);
-    return this.parseJson<MiningExtraction>(response);
+    return this.parseJsonWithRetry<MiningExtraction>(messages);
   }
 
   async planConsolidation(memoriesJson: string): Promise<ConsolidationPlan> {
@@ -32,18 +31,64 @@ export class AiService {
       { role: 'system', content: CONSOLIDATION_SYSTEM },
       { role: 'user', content: CONSOLIDATION_USER(memoriesJson) },
     ];
-    const response = await this.provider.chat(messages);
-    return this.parseJson<ConsolidationPlan>(response);
+    return this.parseJsonWithRetry<ConsolidationPlan>(messages);
   }
 
-  private parseJson<T>(text: string): T {
-    // Extract JSON from potential markdown code blocks
-    const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-    const raw = jsonMatch ? jsonMatch[1].trim() : text.trim();
+  private async parseJsonWithRetry<T>(messages: AiMessage[]): Promise<T> {
+    const response = await this.provider.chat(messages);
+    const raw = this.extractJsonString(response);
     try {
       return safeJsonParse<T>(raw);
     } catch {
-      throw new RepoMemoryError('AI_ERROR', `Failed to parse AI response as JSON: ${text.slice(0, 200)}`);
+      // Retry: send the broken response back asking for correction
+      const retryMessages: AiMessage[] = [
+        ...messages,
+        { role: 'assistant', content: response },
+        {
+          role: 'user',
+          content: `Your response contained invalid JSON. Here is your response:\n\n${response}\n\nPlease fix the JSON and respond with ONLY valid JSON, no markdown, no explanation.`,
+        },
+      ];
+      const retryResponse = await this.provider.chat(retryMessages);
+      const retryRaw = this.extractJsonString(retryResponse);
+      try {
+        return safeJsonParse<T>(retryRaw);
+      } catch {
+        throw new RepoMemoryError('AI_ERROR', `Failed to parse AI response as JSON after retry: ${retryResponse.slice(0, 200)}`);
+      }
     }
+  }
+
+  private extractJsonString(text: string): string {
+    // Try markdown code block first
+    const codeBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (codeBlockMatch) return codeBlockMatch[1].trim();
+
+    // Try to find JSON by matching braces/brackets
+    const trimmed = text.trim();
+    const startChar = trimmed.indexOf('{') !== -1 && (trimmed.indexOf('[') === -1 || trimmed.indexOf('{') < trimmed.indexOf('['))
+      ? '{'
+      : '[';
+    const startIdx = trimmed.indexOf(startChar);
+    if (startIdx === -1) return trimmed;
+
+    const closeChar = startChar === '{' ? '}' : ']';
+    let depth = 0;
+    let inString = false;
+    let escape = false;
+    for (let i = startIdx; i < trimmed.length; i++) {
+      const ch = trimmed[i];
+      if (escape) { escape = false; continue; }
+      if (ch === '\\') { escape = true; continue; }
+      if (ch === '"') { inString = !inString; continue; }
+      if (inString) continue;
+      if (ch === startChar) depth++;
+      else if (ch === closeChar) {
+        depth--;
+        if (depth === 0) return trimmed.slice(startIdx, i + 1);
+      }
+    }
+
+    return trimmed;
   }
 }

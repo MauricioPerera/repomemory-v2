@@ -1,6 +1,7 @@
 import { StorageEngine } from './storage/engine.js';
 import { SearchEngine } from './search/search-engine.js';
 import { SnapshotManager } from './storage/snapshot.js';
+import { AccessTracker } from './storage/access-tracker.js';
 import { MemoryCollection } from './collections/memories.js';
 import { SkillCollection } from './collections/skills.js';
 import { KnowledgeCollection } from './collections/knowledge.js';
@@ -22,23 +23,30 @@ export class RepoMemory {
   private readonly storage: StorageEngine;
   private readonly searchEngine: SearchEngine;
   private readonly snapshots: SnapshotManager;
+  private readonly accessTracker: AccessTracker;
   private readonly ai?: AiProvider;
 
   constructor(config: RepoMemoryConfig) {
     this.storage = new StorageEngine(config.dir);
     this.searchEngine = new SearchEngine(config.dir);
     this.snapshots = new SnapshotManager(config.dir);
+    this.accessTracker = new AccessTracker(config.dir);
     this.ai = config.ai;
 
     this.storage.init();
     this.searchEngine.init();
     this.snapshots.init();
 
-    this.memories = new MemoryCollection(this.storage, this.searchEngine);
-    this.skills = new SkillCollection(this.storage, this.searchEngine);
-    this.knowledge = new KnowledgeCollection(this.storage, this.searchEngine);
+    this.memories = new MemoryCollection(this.storage, this.searchEngine, this.accessTracker);
+    this.skills = new SkillCollection(this.storage, this.searchEngine, this.accessTracker);
+    this.knowledge = new KnowledgeCollection(this.storage, this.searchEngine, this.accessTracker);
     this.sessions = new SessionCollection(this.storage, this.searchEngine);
     this.profiles = new ProfileCollection(this.storage, this.searchEngine);
+  }
+
+  flush(): void {
+    this.searchEngine.flush();
+    this.accessTracker.flush();
   }
 
   snapshot(label: string): SnapshotInfo {
@@ -116,7 +124,6 @@ export class RepoMemory {
 
 // Re-exports
 export type { RepoMemoryConfig } from './types/config.js';
-export type { SearchOptions } from './types/config.js';
 export type { Memory, Skill, Knowledge, Session, Profile, Entity, EntityType } from './types/entities.js';
 export type { SaveMemoryInput, SaveSkillInput, SaveKnowledgeInput, SaveSessionInput, SaveProfileInput } from './types/entities.js';
 export type { SearchResult, CommitInfo, RefInfo, SnapshotInfo, VerifyResult, MiningResult, ConsolidationReport } from './types/results.js';

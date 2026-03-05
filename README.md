@@ -83,7 +83,7 @@ const mem = new RepoMemory({
   dir: '.repomemory',
   ai: provider,              // optional — OllamaProvider, OpenAiProvider, AnthropicProvider
   dedupThreshold: 0.2,       // optional — similarity threshold for saveOrUpdate (default: 0.2)
-  maxSessionTokens: 100_000, // optional — max chars sent to AI mining (default: 100K)
+  maxSessionChars: 100_000,  // optional — max chars sent to AI mining (default: 100K)
 });
 ```
 

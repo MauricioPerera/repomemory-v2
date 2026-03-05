@@ -35,7 +35,7 @@ export class RepoMemory {
 
   constructor(config: RepoMemoryConfig) {
     this.config = config;
-    this.storage = new StorageEngine(config.dir);
+    this.storage = new StorageEngine(config.dir, config.lockEnabled ?? true);
     this.searchEngine = new SearchEngine(config.dir);
     this.snapshots = new SnapshotManager(config.dir);
     this.accessTracker = new AccessTracker(config.dir);
@@ -84,7 +84,7 @@ export class RepoMemory {
   }
 
   recall(agentId: string, userId: string, query: string, options?: RecallOptions): RecallContext {
-    const engine = new RecallEngine(this);
+    const engine = new RecallEngine(this, this.accessTracker);
     return engine.recall(agentId, userId, query, options);
   }
 
@@ -93,7 +93,7 @@ export class RepoMemory {
       throw new RepoMemoryError('AI_NOT_CONFIGURED', 'AI provider required for mining');
     }
     const { MiningPipeline } = await import('./pipelines/mining.js');
-    const pipeline = new MiningPipeline(this.ai, this, { maxSessionChars: this.config.maxSessionTokens });
+    const pipeline = new MiningPipeline(this.ai, this, { maxSessionChars: this.config.maxSessionChars });
     const result = await pipeline.run(sessionId);
     this.events.emit('session:mined', { sessionId });
     return result;

@@ -25,6 +25,10 @@ export class RepoMemoryEventBus {
   }
 
   emit<K extends EventName>(event: K, payload: RepoMemoryEvents[K]): void {
-    this.emitter.emit(event, payload);
+    try {
+      this.emitter.emit(event, payload);
+    } catch {
+      // Swallow handler errors to protect core operations
+    }
   }
 }

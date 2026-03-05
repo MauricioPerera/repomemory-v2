@@ -5,6 +5,7 @@ import { CommitStore, TOMBSTONE } from './commit-store.js';
 import { RefStore } from './ref-store.js';
 import { LookupIndex } from './lookup-index.js';
 import { AuditLog } from './audit-log.js';
+import { LockGuard } from './lockfile.js';
 import type { Entity, EntityType } from '../types/entities.js';
 import type { CommitInfo } from '../types/results.js';
 import { RepoMemoryError } from '../types/errors.js';
@@ -18,14 +19,16 @@ export class StorageEngine {
   readonly lookup: LookupIndex;
   readonly audit: AuditLog;
   readonly baseDir: string;
+  private readonly lock: LockGuard;
 
-  constructor(baseDir: string) {
+  constructor(baseDir: string, lockEnabled = true) {
     this.baseDir = baseDir;
     this.objects = new ObjectStore(baseDir);
     this.commits = new CommitStore(baseDir);
     this.refs = new RefStore(baseDir);
     this.lookup = new LookupIndex(baseDir);
     this.audit = new AuditLog(baseDir);
+    this.lock = new LockGuard(baseDir, lockEnabled);
   }
 
   init(): void {
@@ -52,23 +55,25 @@ export class StorageEngine {
   }
 
   save(entity: Entity, author = 'system'): CommitInfo {
-    const objectHash = this.objects.write(entity.type, entity);
-    const refPath = this.refPath(entity);
-    const existingRef = this.refs.get(refPath);
-    const parentHash = existingRef?.head ?? null;
-    const message = parentHash ? `update ${entity.type}` : `create ${entity.type}`;
-    const commit = this.commits.create(parentHash, objectHash, author, message);
-    this.refs.set(refPath, commit.hash);
-    const scope = this.lookupScope(entity);
-    this.lookup.set(scope, entity.id, refPath);
-    this.audit.append({
-      operation: parentHash ? 'update' : 'create',
-      entityType: entity.type,
-      entityId: entity.id,
-      commitHash: commit.hash,
-      author,
+    return this.lock.withLock(() => {
+      const objectHash = this.objects.write(entity.type, entity);
+      const refPath = this.refPath(entity);
+      const existingRef = this.refs.get(refPath);
+      const parentHash = existingRef?.head ?? null;
+      const message = parentHash ? `update ${entity.type}` : `create ${entity.type}`;
+      const commit = this.commits.create(parentHash, objectHash, author, message);
+      this.refs.set(refPath, commit.hash);
+      const scope = this.lookupScope(entity);
+      this.lookup.set(scope, entity.id, refPath);
+      this.audit.append({
+        operation: parentHash ? 'update' : 'create',
+        entityType: entity.type,
+        entityId: entity.id,
+        commitHash: commit.hash,
+        author,
+      });
+      return commit;
     });
-    return commit;
   }
 
   load(entityId: string): Entity | null {
@@ -83,21 +88,23 @@ export class StorageEngine {
   }
 
   delete(entity: Entity, author = 'system'): CommitInfo {
-    const refPath = this.refPath(entity);
-    const existingRef = this.refs.get(refPath);
-    if (!existingRef) {
-      throw new RepoMemoryError('NOT_FOUND', `Entity not found: ${entity.id}`);
-    }
-    const commit = this.commits.create(existingRef.head, TOMBSTONE, author, `delete ${entity.type}`);
-    this.refs.set(refPath, commit.hash);  // point ref to tombstone commit
-    this.audit.append({
-      operation: 'delete',
-      entityType: entity.type,
-      entityId: entity.id,
-      commitHash: commit.hash,
-      author,
+    return this.lock.withLock(() => {
+      const refPath = this.refPath(entity);
+      const existingRef = this.refs.get(refPath);
+      if (!existingRef) {
+        throw new RepoMemoryError('NOT_FOUND', `Entity not found: ${entity.id}`);
+      }
+      const commit = this.commits.create(existingRef.head, TOMBSTONE, author, `delete ${entity.type}`);
+      this.refs.set(refPath, commit.hash);  // point ref to tombstone commit
+      this.audit.append({
+        operation: 'delete',
+        entityType: entity.type,
+        entityId: entity.id,
+        commitHash: commit.hash,
+        author,
+      });
+      return commit;
     });
-    return commit;
   }
 
   history(entityId: string): CommitInfo[] {

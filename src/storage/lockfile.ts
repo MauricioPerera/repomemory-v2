@@ -1,4 +1,4 @@
-import { mkdirSync, rmdirSync, statSync, existsSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmdirSync, statSync, existsSync, writeFileSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 
 const STALE_THRESHOLD_MS = 30_000; // 30 seconds
@@ -37,7 +37,6 @@ export class Lockfile {
       // Remove PID file first, then directory
       const pidPath = join(this.lockDir, 'pid');
       if (existsSync(pidPath)) {
-        const { unlinkSync } = require('node:fs') as typeof import('node:fs');
         unlinkSync(pidPath);
       }
       rmdirSync(this.lockDir);
@@ -61,7 +60,6 @@ export class Lockfile {
     try {
       const pidPath = join(this.lockDir, 'pid');
       if (existsSync(pidPath)) {
-        const { unlinkSync } = require('node:fs') as typeof import('node:fs');
         unlinkSync(pidPath);
       }
       rmdirSync(this.lockDir);

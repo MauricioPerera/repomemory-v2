@@ -24,5 +24,6 @@ export function computeTagOverlap(entityTags: string[], queryTags: string[]): nu
 export function daysBetween(a: string | Date, b: string | Date): number {
   const da = typeof a === 'string' ? new Date(a) : a;
   const db = typeof b === 'string' ? new Date(b) : b;
-  return Math.abs(da.getTime() - db.getTime()) / (1000 * 60 * 60 * 24);
+  const diff = Math.abs(da.getTime() - db.getTime()) / (1000 * 60 * 60 * 24);
+  return Number.isNaN(diff) ? 0 : diff;
 }

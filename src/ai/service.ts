@@ -28,21 +28,21 @@ function validateMiningExtraction(data: unknown): data is MiningExtraction {
   for (const m of obj.memories) {
     if (typeof m !== 'object' || m === null) return false;
     const mem = m as Record<string, unknown>;
-    if (typeof mem.content !== 'string') return false;
-    if (!Array.isArray(mem.tags)) return false;
-    if (typeof mem.category !== 'string') return false;
+    if (typeof mem.content !== 'string' || mem.content.length === 0) return false;
+    if (!Array.isArray(mem.tags) || !mem.tags.every((t: unknown) => typeof t === 'string')) return false;
+    if (typeof mem.category !== 'string' || mem.category.length === 0) return false;
   }
   for (const s of obj.skills) {
     if (typeof s !== 'object' || s === null) return false;
     const skill = s as Record<string, unknown>;
-    if (typeof skill.content !== 'string') return false;
-    if (!Array.isArray(skill.tags)) return false;
-    if (typeof skill.category !== 'string') return false;
+    if (typeof skill.content !== 'string' || skill.content.length === 0) return false;
+    if (!Array.isArray(skill.tags) || !skill.tags.every((t: unknown) => typeof t === 'string')) return false;
+    if (typeof skill.category !== 'string' || skill.category.length === 0) return false;
   }
   if (obj.profile !== undefined && obj.profile !== null) {
     if (typeof obj.profile !== 'object') return false;
     const p = obj.profile as Record<string, unknown>;
-    if (typeof p.content !== 'string') return false;
+    if (typeof p.content !== 'string' || p.content.length === 0) return false;
     if (typeof p.metadata !== 'object' || p.metadata === null) return false;
   }
   return true;
@@ -51,17 +51,19 @@ function validateMiningExtraction(data: unknown): data is MiningExtraction {
 function validateConsolidationPlan(data: unknown): data is ConsolidationPlan {
   if (typeof data !== 'object' || data === null) return false;
   const obj = data as Record<string, unknown>;
-  if (!Array.isArray(obj.keep)) return false;
+  if (!Array.isArray(obj.keep) || !obj.keep.every((k: unknown) => typeof k === 'string')) return false;
   if (!Array.isArray(obj.merge)) return false;
-  if (!Array.isArray(obj.remove)) return false;
+  if (!Array.isArray(obj.remove) || !obj.remove.every((r: unknown) => typeof r === 'string')) return false;
   for (const m of obj.merge) {
     if (typeof m !== 'object' || m === null) return false;
     const merge = m as Record<string, unknown>;
-    if (!Array.isArray(merge.sourceIds)) return false;
+    if (!Array.isArray(merge.sourceIds) || !merge.sourceIds.every((s: unknown) => typeof s === 'string')) return false;
+    if (merge.sourceIds.length === 0) return false;
     if (typeof merge.merged !== 'object' || merge.merged === null) return false;
     const merged = merge.merged as Record<string, unknown>;
-    if (typeof merged.content !== 'string') return false;
-    if (!Array.isArray(merged.tags)) return false;
+    if (typeof merged.content !== 'string' || merged.content.length === 0) return false;
+    if (!Array.isArray(merged.tags) || !merged.tags.every((t: unknown) => typeof t === 'string')) return false;
+    if (typeof merged.category !== 'string' || merged.category.length === 0) return false;
   }
   return true;
 }

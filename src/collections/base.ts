@@ -53,6 +53,7 @@ export abstract class BaseCollection<T extends Entity> {
       const commit = this.storage.save(entity);
       this.searchEngine.indexEntity(this.searchScope(agentId, userId), entity);
       results.push([entity, commit]);
+      if (this.eventBus) this.eventBus.emit('entity:save', { entity, commit });
     }
     this.searchEngine.flush();
     return results;

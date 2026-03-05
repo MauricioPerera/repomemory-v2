@@ -1,4 +1,5 @@
 import type { RepoMemory } from '../index.js';
+import type { AccessTracker } from '../storage/access-tracker.js';
 import type { Memory, Skill, Knowledge, Profile } from '../types/entities.js';
 import type { SearchResult, RecallContext, RecallOptions } from '../types/results.js';
 import { formatRecallContext } from './formatter.js';
@@ -7,7 +8,10 @@ const DEFAULT_MAX_ITEMS = 20;
 const DEFAULT_MAX_CHARS = 8_000;
 
 export class RecallEngine {
-  constructor(private readonly repo: RepoMemory) {}
+  constructor(
+    private readonly repo: RepoMemory,
+    private readonly accessTracker?: AccessTracker,
+  ) {}
 
   recall(agentId: string, userId: string, query: string, options?: RecallOptions): RecallContext {
     const maxItems = options?.maxItems ?? DEFAULT_MAX_ITEMS;
@@ -40,10 +44,12 @@ export class RecallEngine {
       profile = this.repo.profiles.getByUser(agentId, userId);
     }
 
-    // Track access for scored items
-    for (const r of [...memories, ...skills, ...knowledge]) {
-      if ('accessCount' in r.entity) {
-        // Access tracking is handled by the collection's get() method
+    // Track access for recalled items
+    if (this.accessTracker) {
+      const ids = [...memories, ...skills, ...knowledge].map(r => r.entity.id);
+      if (ids.length > 0) {
+        this.accessTracker.incrementMany(ids);
+        this.accessTracker.flush();
       }
     }
 

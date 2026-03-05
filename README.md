@@ -16,11 +16,11 @@ RepoMemory provides persistent, versioned memory for AI agents. Every change is 
 - **Recall engine** — single `recall()` call retrieves and formats relevant context across all collections
 - **Incremental TF-IDF search** — cached to disk, updated incrementally on writes, Jaccard tag overlap
 - **Deduplication** — `saveOrUpdate()` detects similar content with configurable threshold
-- **Batch operations** — `saveMany()` and `incrementMany()` for bulk writes with single flush
-- **Event system** — typed event bus for entity lifecycle hooks (`entity:save`, `entity:update`, `entity:delete`, `session:mined`, `consolidation:done`)
+- **Batch operations** — `saveMany()` and `incrementMany()` for bulk writes with single flush. `saveMany()` emits `entity:save` per item
+- **Event system** — typed event bus for entity lifecycle hooks (`entity:save`, `entity:update`, `entity:delete`, `session:mined`, `consolidation:done`). Handler errors are caught internally and never crash core operations
 - **TTL cleanup** — remove stale entities by age, with dry-run support and audit log rotation
-- **File locking** — optional filesystem-based lock for concurrent access safety
-- **AI validation** — schema validators on AI responses with automatic retry on malformed output
+- **File locking** — filesystem-based mutex wraps every `save()` and `delete()` for concurrent access safety (configurable via `lockEnabled`)
+- **AI validation** — strict schema validators on AI responses (non-empty content, typed tags, valid IDs) with automatic retry on malformed output
 - **Optional AI** — mining and consolidation (memories, skills, knowledge) via OpenAI, Anthropic, or Ollama
 - **Zero runtime dependencies** — only Node.js built-ins (`node:fs`, `node:path`, `node:crypto`, `fetch`)
 - **Library + CLI** — import as a TypeScript library or use from the command line
@@ -84,6 +84,7 @@ const mem = new RepoMemory({
   ai: provider,              // optional — OllamaProvider, OpenAiProvider, AnthropicProvider
   dedupThreshold: 0.2,       // optional — similarity threshold for saveOrUpdate (default: 0.2)
   maxSessionChars: 100_000,  // optional — max chars sent to AI mining (default: 100K)
+  lockEnabled: true,         // optional — filesystem locking for concurrent access (default: true)
 });
 ```
 
@@ -232,7 +233,7 @@ mem.flush();  // writes search indices + access counts to disk
 
 #### Recall
 
-`recall()` is the primary read path for agents — it searches across all collections and returns a pre-formatted context string ready to inject into an LLM system prompt:
+`recall()` is the primary read path for agents — it searches across all collections, increments access counts for all returned entities, and returns a pre-formatted context string ready to inject into an LLM system prompt:
 
 ```ts
 const ctx = mem.recall('agent-1', 'user-1', 'typescript deployment', {
@@ -372,6 +373,8 @@ repomemory snapshot list
 repomemory snapshot restore <id>
 repomemory mine <sessionId> [--provider ollama|openai|anthropic] [--model <name>]
 repomemory consolidate --agent <id> [--user <id>] [--type memories|skills|knowledge] [--provider ollama] [--model <name>]
+repomemory recall <query> --agent <id> --user <id> [--max-items 20] [--max-chars 8000]
+repomemory cleanup [--max-age 90] [--max-audit 10000] [--dry-run]
 repomemory stats
 repomemory verify
 ```
@@ -405,12 +408,14 @@ All commands accept `--dir <path>` to specify the storage directory (default: `.
 
 ### How a save works
 
-1. Entity data -> `objectHash = sha256(serialized)` -> written to `objects/`
-2. Existing ref read to get `parentHash`
-3. Commit created: `{ parent, objectHash, timestamp, author, message }` -> written to `commits/`
-4. Ref updated to point to new commit
-5. Lookup index and TF-IDF index updated incrementally
-6. Operation appended to audit log
+1. Filesystem lock acquired (if `lockEnabled`)
+2. Entity data -> `objectHash = sha256(serialized)` -> written to `objects/`
+3. Existing ref read to get `parentHash`
+4. Commit created: `{ parent, objectHash, timestamp, author, message }` -> written to `commits/`
+5. Ref updated to point to new commit
+6. Lookup index and TF-IDF index updated incrementally
+7. Operation appended to audit log
+8. Lock released
 
 Deletes create a tombstone commit (`objectHash: "TOMBSTONE"`). The ref points to the tombstone commit and the full commit chain is preserved, so `history()` works after deletion.
 
@@ -427,7 +432,7 @@ RepoMemory (facade)
 |   +-- AccessTracker      Access counts per entity (no commits, side-index)
 |   +-- AuditLog           Append-only operation log (JSONL) with rotate()
 |   +-- SnapshotManager    Full point-in-time backups
-|   +-- Lockfile           Filesystem-based mutex (mkdir atomic lock + stale detection)
+|   +-- LockGuard          Filesystem-based mutex wrapping save/delete (mkdir atomic + stale detection)
 |
 +-- Search Layer
 |   +-- SearchEngine       Scoped TF-IDF indices, persisted to disk
@@ -436,7 +441,7 @@ RepoMemory (facade)
 |   +-- Scoring            Composite: TF-IDF + Jaccard tags + decay + access boost
 |
 +-- Recall Layer
-|   +-- RecallEngine       Multi-collection query with budget-aware formatting
+|   +-- RecallEngine       Multi-collection query with budget-aware formatting + access tracking
 |   +-- RecallFormatter    Structured text output for LLM system prompts
 |
 +-- Collections (typed CRUD facades)
@@ -447,7 +452,7 @@ RepoMemory (facade)
 |   +-- ProfileCollection  per agent/user profiles with metadata
 |
 +-- Event System
-|   +-- RepoMemoryEventBus  Typed EventEmitter wrapper (entity:save/update/delete, session:mined, consolidation:done)
+|   +-- RepoMemoryEventBus  Typed EventEmitter wrapper with try-catch protection (entity:save/update/delete, session:mined, consolidation:done)
 |
 +-- Cleanup
 |   +-- runCleanup          TTL-based entity removal with dry-run and audit rotation
@@ -494,11 +499,26 @@ The TF-IDF index is cached to disk and updated incrementally — no full rebuild
 | Consolidation chunks of 20 | Keeps LLM context windows manageable |
 | Access count as side-index | Reads don't create commits (audit-free popularity tracking) |
 | Budget-aware recall formatter | Fits context into LLM token limits without cutting items mid-text |
-| Typed event bus | Type-safe hooks without coupling consumers to internals |
-| Schema validators on AI output | Catch malformed LLM responses before they corrupt storage |
-| mkdir-based file locking | Atomic on all platforms; stale lock detection via mtime |
+| Typed event bus with try-catch | Type-safe hooks without coupling consumers to internals; handler errors never crash core ops |
+| Strict schema validators on AI output | Catch malformed LLM responses before they corrupt storage; validates content, tags, categories |
+| mkdir-based file locking on save/delete | Atomic on all platforms; stale lock detection via mtime; wraps every write operation |
 
 ## Changelog
+
+### v2.2.1
+
+**Bug Fixes**
+- **LockGuard wired into StorageEngine**: `save()` and `delete()` are now wrapped in `withLock()` for actual concurrent access protection. Previously, `Lockfile` and `LockGuard` existed but were never used. The `lockEnabled` config option now flows through to the storage engine.
+- **Recall access tracking**: `recall()` now increments access counts for all returned entities via `AccessTracker.incrementMany()`. Previously, the access tracking loop was a no-op (empty body).
+- **Event emit try-catch**: Event handlers that throw no longer crash core operations (`save`, `update`, `delete`). Errors are caught and swallowed by the event bus.
+- **saveMany emits events**: `saveMany()` now fires `entity:save` for each item. Previously, only individual `save()` emitted events.
+- **Config rename**: `maxSessionTokens` renamed to `maxSessionChars` for accuracy (it controls character count, not tokens). **Breaking change** for users who set this config option.
+- **Score NaN guard**: `daysBetween()` returns 0 instead of NaN when given invalid date strings, preventing NaN scores from propagating through search results.
+- **AI validators strengthened**: Mining and consolidation validators now check that tag arrays contain strings, content is non-empty, category is non-empty, merge sourceIds are non-empty strings, and keep/remove arrays contain strings.
+- **Lockfile ESM fix**: Replaced `require('node:fs')` calls with top-level ESM imports for compatibility with the project's `"type": "module"` setting.
+
+**Tests**
+- Added 10 new tests covering all v2.2.1 fixes (total: 168 tests)
 
 ### v2.2.0
 
@@ -545,13 +565,13 @@ npm run build        # Build ESM + .d.ts + sourcemaps (tsup)
 
 ### Running Tests
 
-Tests use temporary directories and clean up after themselves. 158 tests across 16 files:
+Tests use temporary directories and clean up after themselves. 168 tests across 16 files:
 
 - **Unit tests**: tokenizer, TF-IDF, scoring, JSON serialization, CLI parser
 - **Storage tests**: object store, commit store, ref store, engine, snapshots
 - **Integration tests**: scoping, dedup, saveOrUpdate, batch operations
 - **Simulation tests**: full agent workflow (onboarding, search, deletion, history)
-- **v2.2 feature tests**: recall engine, events, structured sessions, cleanup, file locking, dedup threshold, AI validation
+- **v2.2 feature tests**: recall engine, events, structured sessions, cleanup, file locking, dedup threshold, AI validation, access tracking, NaN guards, ESM compatibility
 - **Benchmarks**: save/saveMany throughput, search latency
 
 ```bash

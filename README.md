@@ -12,9 +12,15 @@ RepoMemory provides persistent, versioned memory for AI agents. Every change is 
 - **Shared scope** — `SHARED_AGENT_ID` (`_shared`) for cross-agent skills and knowledge
 - **Cross-agent profiles** — query a user's profile across all agents
 - **Conversations** — group sessions by `conversationId`
+- **Structured sessions** — save raw transcript or structured `messages[]` with role/content/timestamp
+- **Recall engine** — single `recall()` call retrieves and formats relevant context across all collections
 - **Incremental TF-IDF search** — cached to disk, updated incrementally on writes, Jaccard tag overlap
-- **Deduplication** — `saveOrUpdate()` detects similar content and updates instead of duplicating
+- **Deduplication** — `saveOrUpdate()` detects similar content with configurable threshold
 - **Batch operations** — `saveMany()` and `incrementMany()` for bulk writes with single flush
+- **Event system** — typed event bus for entity lifecycle hooks (`entity:save`, `entity:update`, `entity:delete`, `session:mined`, `consolidation:done`)
+- **TTL cleanup** — remove stale entities by age, with dry-run support and audit log rotation
+- **File locking** — optional filesystem-based lock for concurrent access safety
+- **AI validation** — schema validators on AI responses with automatic retry on malformed output
 - **Optional AI** — mining and consolidation (memories, skills, knowledge) via OpenAI, Anthropic, or Ollama
 - **Zero runtime dependencies** — only Node.js built-ins (`node:fs`, `node:path`, `node:crypto`, `fetch`)
 - **Library + CLI** — import as a TypeScript library or use from the command line
@@ -73,7 +79,12 @@ repomemory verify
 ```ts
 import { RepoMemory } from 'repomemory';
 
-const mem = new RepoMemory({ dir: '.repomemory' });
+const mem = new RepoMemory({
+  dir: '.repomemory',
+  ai: provider,              // optional — OllamaProvider, OpenAiProvider, AnthropicProvider
+  dedupThreshold: 0.2,       // optional — similarity threshold for saveOrUpdate (default: 0.2)
+  maxSessionTokens: 100_000, // optional — max chars sent to AI mining (default: 100K)
+});
 ```
 
 #### Collections
@@ -165,11 +176,21 @@ mem.knowledge.listShared();
 ##### `mem.sessions`
 
 ```ts
+// Save with plain text content
 mem.sessions.save('agent-1', 'user-1', {
   content: 'Full session transcript...',
   startedAt: '2024-01-01T00:00:00Z',  // optional
   endedAt: '2024-01-01T01:00:00Z',    // optional
   conversationId: 'conv-abc',          // optional — groups related sessions
+});
+
+// Save with structured messages (preferred — AI mining formats them automatically)
+mem.sessions.save('agent-1', 'user-1', {
+  content: 'fallback text',
+  messages: [
+    { role: 'user', content: 'How do I deploy?', timestamp: '2024-01-01T00:00:00Z' },
+    { role: 'assistant', content: 'Run docker compose up', timestamp: '2024-01-01T00:00:01Z' },
+  ],
 });
 
 mem.sessions.markMined('session-id');
@@ -207,6 +228,60 @@ Call `flush()` to persist search indices and access counts to disk. This is call
 ```ts
 mem.memories.search('agent-1', 'user-1', 'query');  // increments access counts in memory
 mem.flush();  // writes search indices + access counts to disk
+```
+
+#### Recall
+
+`recall()` is the primary read path for agents — it searches across all collections and returns a pre-formatted context string ready to inject into an LLM system prompt:
+
+```ts
+const ctx = mem.recall('agent-1', 'user-1', 'typescript deployment', {
+  maxItems: 20,              // max results per collection (default: 20)
+  maxChars: 8000,            // max total chars in formatted output (default: 8000)
+  includeProfile: true,      // include user profile (default: true)
+  includeSharedSkills: true,  // include _shared skills (default: true)
+  includeSharedKnowledge: true, // include _shared knowledge (default: true)
+  collections: ['memories', 'skills', 'knowledge'], // which collections to query
+});
+
+// ctx.formatted — ready-to-use string with ## sections for each collection
+// ctx.memories, ctx.skills, ctx.knowledge — raw SearchResult arrays
+// ctx.profile — Profile | null
+// ctx.totalItems, ctx.estimatedChars — stats
+```
+
+#### Events
+
+Subscribe to typed events for entity lifecycle hooks:
+
+```ts
+mem.on('entity:save', ({ entity, commit }) => {
+  console.log(`Saved ${entity.type} ${entity.id} at commit ${commit.hash}`);
+});
+
+mem.on('entity:update', ({ entity, commit }) => { /* ... */ });
+mem.on('entity:delete', ({ entityId, entityType, commit }) => { /* ... */ });
+mem.on('session:mined', ({ sessionId }) => { /* ... */ });
+mem.on('consolidation:done', ({ type, agentId }) => { /* ... */ });
+
+// Remove listener
+mem.off('entity:save', handler);
+```
+
+#### Cleanup
+
+Remove stale entities by age, with optional audit log rotation:
+
+```ts
+// Remove memories/skills/knowledge older than 90 days
+const report = mem.cleanup({ maxAgeDays: 90 });
+// { removed: 3, preserved: 42, auditRotated: false, details: [...] }
+
+// Dry run — see what would be removed without deleting
+const preview = mem.cleanup({ maxAgeDays: 90, dryRun: true });
+
+// Also rotate audit log to keep last 1000 entries
+mem.cleanup({ maxAgeDays: 90, maxAuditLines: 1000 });
 ```
 
 #### Snapshots
@@ -350,8 +425,9 @@ RepoMemory (facade)
 |   +-- RefStore           HEAD pointers: ref -> latest commit hash
 |   +-- LookupIndex        Global entityId -> refPath reverse index
 |   +-- AccessTracker      Access counts per entity (no commits, side-index)
-|   +-- AuditLog           Append-only operation log (JSONL)
+|   +-- AuditLog           Append-only operation log (JSONL) with rotate()
 |   +-- SnapshotManager    Full point-in-time backups
+|   +-- Lockfile           Filesystem-based mutex (mkdir atomic lock + stale detection)
 |
 +-- Search Layer
 |   +-- SearchEngine       Scoped TF-IDF indices, persisted to disk
@@ -359,18 +435,29 @@ RepoMemory (facade)
 |   +-- Tokenizer          Word tokenization with stopwords (EN + ES)
 |   +-- Scoring            Composite: TF-IDF + Jaccard tags + decay + access boost
 |
++-- Recall Layer
+|   +-- RecallEngine       Multi-collection query with budget-aware formatting
+|   +-- RecallFormatter    Structured text output for LLM system prompts
+|
 +-- Collections (typed CRUD facades)
 |   +-- MemoryCollection   facts, decisions, issues, tasks (+ saveOrUpdate dedup)
 |   +-- SkillCollection    procedures, config, troubleshooting, workflows
 |   +-- KnowledgeCollection  source, chunks, versions, questions
-|   +-- SessionCollection  conversations, mined flag, conversationId grouping
+|   +-- SessionCollection  conversations, structured messages, mined flag
 |   +-- ProfileCollection  per agent/user profiles with metadata
 |
++-- Event System
+|   +-- RepoMemoryEventBus  Typed EventEmitter wrapper (entity:save/update/delete, session:mined, consolidation:done)
+|
++-- Cleanup
+|   +-- runCleanup          TTL-based entity removal with dry-run and audit rotation
+|
 +-- AI Pipelines (optional, lazy-loaded)
-|   +-- MiningPipeline              Extract memories + skills + profile from session
+|   +-- MiningPipeline              Extract memories + skills + profile from session (structured messages aware)
 |   +-- ConsolidationPipeline       Merge/dedup memories by category (chunks of 20)
 |   +-- SkillConsolidationPipeline  Merge/dedup skills by category
 |   +-- KnowledgeConsolidationPipeline  Merge/dedup knowledge items
+|   +-- AiService                   Schema-validated JSON parsing with retry
 |
 +-- AI Providers (sub-export: repomemory/ai)
     +-- OllamaProvider     Local Ollama (default: llama3.1)
@@ -406,8 +493,29 @@ The TF-IDF index is cached to disk and updated incrementally — no full rebuild
 | Lazy-loaded AI pipelines | Core library works with zero cost when AI is not used |
 | Consolidation chunks of 20 | Keeps LLM context windows manageable |
 | Access count as side-index | Reads don't create commits (audit-free popularity tracking) |
+| Budget-aware recall formatter | Fits context into LLM token limits without cutting items mid-text |
+| Typed event bus | Type-safe hooks without coupling consumers to internals |
+| Schema validators on AI output | Catch malformed LLM responses before they corrupt storage |
+| mkdir-based file locking | Atomic on all platforms; stale lock detection via mtime |
 
 ## Changelog
+
+### v2.2.0
+
+**New Features**
+- **Recall engine** (`mem.recall()`): Single-call context retrieval across all collections. Budget-aware formatter produces structured text for LLM system prompts with configurable `maxChars` and `maxItems`.
+- **Event system** (`mem.on()`/`mem.off()`): Typed event bus with `entity:save`, `entity:update`, `entity:delete`, `session:mined`, and `consolidation:done` events. All collections emit events automatically.
+- **Structured sessions**: Sessions now accept an optional `messages[]` array with `{ role, content, timestamp }`. Mining pipeline automatically formats structured messages for AI extraction.
+- **TTL cleanup** (`mem.cleanup()`): Remove stale memories/skills/knowledge older than N days. Supports dry-run mode and audit log rotation via `maxAuditLines`.
+- **File locking**: `Lockfile` and `LockGuard` classes for filesystem-based mutex with stale lock detection (30s timeout). Available for concurrent access scenarios.
+- **Configurable dedup threshold**: `dedupThreshold` config option controls `saveOrUpdate()` similarity sensitivity (default: 0.2).
+- **AI response validation**: Schema validators for mining extraction and consolidation plan responses. Automatic retry on malformed AI output before failing.
+
+**New Types**
+- `RecallContext`, `RecallOptions`, `CleanupOptions`, `CleanupReport`, `SessionMessage`, `RepoMemoryEvents`, `EventName`, `EventHandler`
+
+**Tests**
+- Added 33 new tests covering all v2.2.0 features (total: 158 tests)
 
 ### v2.1.0
 
@@ -437,12 +545,13 @@ npm run build        # Build ESM + .d.ts + sourcemaps (tsup)
 
 ### Running Tests
 
-Tests use temporary directories and clean up after themselves. The full suite includes:
+Tests use temporary directories and clean up after themselves. 158 tests across 16 files:
 
 - **Unit tests**: tokenizer, TF-IDF, scoring, JSON serialization, CLI parser
 - **Storage tests**: object store, commit store, ref store, engine, snapshots
 - **Integration tests**: scoping, dedup, saveOrUpdate, batch operations
 - **Simulation tests**: full agent workflow (onboarding, search, deletion, history)
+- **v2.2 feature tests**: recall engine, events, structured sessions, cleanup, file locking, dedup threshold, AI validation
 - **Benchmarks**: save/saveMany throughput, search latency
 
 ```bash

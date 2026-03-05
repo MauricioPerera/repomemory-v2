@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, appendFileSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { safeJsonStringify } from '../serialization/json.js';
 
@@ -32,5 +32,18 @@ export class AuditLog {
     const content = readFileSync(this.path, 'utf8').trim();
     if (!content) return [];
     return content.split('\n').map(line => JSON.parse(line) as AuditEntry);
+  }
+
+  /**
+   * Rotate the audit log, keeping only the last `maxLines` entries.
+   */
+  rotate(maxLines: number): void {
+    if (!existsSync(this.path)) return;
+    const content = readFileSync(this.path, 'utf8').trim();
+    if (!content) return;
+    const lines = content.split('\n');
+    if (lines.length <= maxLines) return;
+    const kept = lines.slice(lines.length - maxLines);
+    writeFileSync(this.path, kept.join('\n') + '\n', 'utf8');
   }
 }

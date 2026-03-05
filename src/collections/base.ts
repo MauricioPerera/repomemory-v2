@@ -6,14 +6,21 @@ import { computeScore, computeTagOverlap, daysBetween } from '../search/scoring.
 import type { Entity, EntityType } from '../types/entities.js';
 import type { SearchResult, CommitInfo } from '../types/results.js';
 import { RepoMemoryError } from '../types/errors.js';
+import type { RepoMemoryEventBus } from '../events.js';
 
 export abstract class BaseCollection<T extends Entity> {
+  protected eventBus?: RepoMemoryEventBus;
+
   constructor(
     protected readonly storage: StorageEngine,
     protected readonly searchEngine: SearchEngine,
     protected readonly entityType: EntityType,
     protected readonly accessTracker?: AccessTracker,
   ) {}
+
+  setEventBus(eventBus: RepoMemoryEventBus): void {
+    this.eventBus = eventBus;
+  }
 
   protected abstract buildEntity(id: string, agentId: string, userId: string | undefined, input: Record<string, unknown>): T;
   protected abstract searchScope(agentId: string, userId?: string): string;
@@ -29,6 +36,7 @@ export abstract class BaseCollection<T extends Entity> {
     const commit = this.storage.save(entity);
     this.searchEngine.indexEntity(this.searchScope(agentId, userId), entity);
     this.searchEngine.flush();
+    if (this.eventBus) this.eventBus.emit('entity:save', { entity, commit });
     return [entity, commit];
   }
 
@@ -61,6 +69,7 @@ export abstract class BaseCollection<T extends Entity> {
     const userId = 'userId' in updated ? (updated as unknown as { userId: string }).userId : undefined;
     this.searchEngine.indexEntity(this.searchScope(agentId, userId), updated);
     this.searchEngine.flush();
+    if (this.eventBus) this.eventBus.emit('entity:update', { entity: updated, commit });
     return [updated, commit];
   }
 
@@ -86,7 +95,9 @@ export abstract class BaseCollection<T extends Entity> {
       this.accessTracker.remove(entityId);
       this.accessTracker.flush();
     }
-    return this.storage.delete(entity);
+    const commit = this.storage.delete(entity);
+    if (this.eventBus) this.eventBus.emit('entity:delete', { entityId, entityType: this.entityType, commit });
+    return commit;
   }
 
   list(agentId: string, userId?: string): T[] {

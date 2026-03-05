@@ -43,11 +43,18 @@ export interface Knowledge extends BaseEntity {
   accessCount: number;
 }
 
+export interface SessionMessage {
+  role: string;
+  content: string;
+  timestamp?: string;
+}
+
 export interface Session extends BaseEntity {
   type: 'session';
   agentId: string;
   userId: string;
   content: string;
+  messages?: SessionMessage[];
   mined: boolean;
   startedAt: string;
   endedAt?: string;
@@ -90,6 +97,7 @@ export interface SaveKnowledgeInput {
 
 export interface SaveSessionInput {
   content: string;
+  messages?: SessionMessage[];
   startedAt?: string;
   endedAt?: string;
   conversationId?: string;

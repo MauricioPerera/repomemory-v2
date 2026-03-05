@@ -6,8 +6,11 @@ import type { SearchEngine } from '../search/search-engine.js';
 import type { AccessTracker } from '../storage/access-tracker.js';
 
 export class MemoryCollection extends BaseCollection<Memory> {
-  constructor(storage: StorageEngine, search: SearchEngine, accessTracker?: AccessTracker) {
+  private readonly dedupThreshold: number;
+
+  constructor(storage: StorageEngine, search: SearchEngine, accessTracker?: AccessTracker, dedupThreshold = 0.2) {
     super(storage, search, 'memory', accessTracker);
+    this.dedupThreshold = dedupThreshold;
   }
 
   override save(agentId: string, userId: string | undefined, input: Record<string, unknown>): [Memory, CommitInfo] {
@@ -38,7 +41,7 @@ export class MemoryCollection extends BaseCollection<Memory> {
     const content = input.content as string;
     const candidates = this.find(agentId, userId, content, 5);
     for (const { entity, score } of candidates) {
-      if (entity.category === category && score >= 0.2) {
+      if (entity.category === category && score >= this.dedupThreshold) {
         const [updated, commit] = this.update(entity.id, {
           content,
           tags: (input.tags as string[]) ?? entity.tags,

@@ -1,4 +1,4 @@
-import type { Entity, Memory, Skill, Profile } from './entities.js';
+import type { Entity, Memory, Skill, Knowledge, Profile } from './entities.js';
 
 export interface SearchResult<T extends Entity = Entity> {
   entity: T;
@@ -60,4 +60,23 @@ export interface VerifyResult {
   totalObjects: number;
   totalCommits: number;
   errors: string[];
+}
+
+export interface RecallOptions {
+  maxItems?: number;
+  maxChars?: number;
+  includeSharedSkills?: boolean;
+  includeSharedKnowledge?: boolean;
+  includeProfile?: boolean;
+  collections?: Array<'memories' | 'skills' | 'knowledge'>;
+}
+
+export interface RecallContext {
+  memories: Array<SearchResult<Memory>>;
+  skills: Array<SearchResult<Skill>>;
+  knowledge: Array<SearchResult<Knowledge>>;
+  profile: Profile | null;
+  formatted: string;
+  totalItems: number;
+  estimatedChars: number;
 }

@@ -1,5 +1,5 @@
 import { BaseCollection } from './base.js';
-import type { Session } from '../types/entities.js';
+import type { Session, SessionMessage } from '../types/entities.js';
 import type { CommitInfo } from '../types/results.js';
 import type { StorageEngine } from '../storage/engine.js';
 import type { SearchEngine } from '../search/search-engine.js';
@@ -16,6 +16,9 @@ export class SessionCollection extends BaseCollection<Session> {
       startedAt: (input.startedAt as string) ?? new Date().toISOString(),
       endedAt: input.endedAt,
     };
+    if (input.messages) {
+      normalized.messages = input.messages;
+    }
     if (input.conversationId) {
       normalized.conversationId = input.conversationId;
     }
@@ -66,6 +69,9 @@ export class SessionCollection extends BaseCollection<Session> {
       createdAt: input.createdAt as string,
       updatedAt: input.updatedAt as string,
     };
+    if (input.messages) {
+      entity.messages = input.messages as SessionMessage[];
+    }
     if (input.conversationId) {
       entity.conversationId = input.conversationId as string;
     }

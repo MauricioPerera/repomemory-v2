@@ -54,7 +54,22 @@ export class StorageEngine {
     return readFileSync(versionPath, 'utf8').trim();
   }
 
+  private validateId(value: string, name: string): void {
+    if (!value || /[/\\:\0]/.test(value) || value.includes('..')) {
+      throw new RepoMemoryError('INVALID_INPUT', `Invalid ${name}: contains illegal characters`);
+    }
+  }
+
+  private validateEntity(entity: Entity): void {
+    this.validateId(entity.id, 'id');
+    if ('agentId' in entity) this.validateId((entity as { agentId: string }).agentId, 'agentId');
+    if ('userId' in entity && (entity as { userId: string }).userId) {
+      this.validateId((entity as { userId: string }).userId, 'userId');
+    }
+  }
+
   save(entity: Entity, author = 'system'): CommitInfo {
+    this.validateEntity(entity);
     return this.lock.withLock(() => {
       const objectHash = this.objects.write(entity.type, entity);
       const refPath = this.refPath(entity);
@@ -88,6 +103,7 @@ export class StorageEngine {
   }
 
   delete(entity: Entity, author = 'system'): CommitInfo {
+    this.validateEntity(entity);
     return this.lock.withLock(() => {
       const refPath = this.refPath(entity);
       const existingRef = this.refs.get(refPath);

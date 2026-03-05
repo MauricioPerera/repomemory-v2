@@ -1,7 +1,8 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, unlinkSync, readdirSync, statSync } from 'node:fs';
 import { join, dirname, relative } from 'node:path';
 import type { RefInfo } from '../types/results.js';
 import { safeJsonParse, safeJsonStringify } from '../serialization/json.js';
+import { atomicWriteFileSync } from './atomic-write.js';
 
 export class RefStore {
   private readonly dir: string;
@@ -22,7 +23,7 @@ export class RefStore {
       head: commitHash,
       created: existing?.created ?? new Date().toISOString(),
     };
-    writeFileSync(fullPath, safeJsonStringify(ref), 'utf8');
+    atomicWriteFileSync(fullPath, safeJsonStringify(ref));
   }
 
   get(refPath: string): RefInfo | null {

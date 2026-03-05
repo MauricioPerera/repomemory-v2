@@ -1,9 +1,10 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { sha256 } from './object-store.js';
 import { RepoMemoryError } from '../types/errors.js';
 import type { CommitInfo } from '../types/results.js';
 import { safeJsonParse, safeJsonStringify } from '../serialization/json.js';
+import { atomicWriteFileSync } from './atomic-write.js';
 
 export const TOMBSTONE = 'TOMBSTONE';
 
@@ -26,7 +27,7 @@ export class CommitStore {
 
     const path = this.hashPath(commit.hash);
     mkdirSync(join(this.dir, commit.hash.slice(0, 2)), { recursive: true });
-    writeFileSync(path, safeJsonStringify(commit), 'utf8');
+    atomicWriteFileSync(path, safeJsonStringify(commit));
     return commit;
   }
 

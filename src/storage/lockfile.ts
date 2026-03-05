@@ -1,4 +1,4 @@
-import { mkdirSync, rmdirSync, statSync, existsSync, writeFileSync, unlinkSync } from 'node:fs';
+import { mkdirSync, rmdirSync, statSync, existsSync, writeFileSync, readFileSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 
 const STALE_THRESHOLD_MS = 30_000; // 30 seconds
@@ -11,8 +11,9 @@ export class Lockfile {
     this.lockDir = join(baseDir, '.lock');
   }
 
-  acquire(): boolean {
+  acquire(depth = 0): boolean {
     if (this.acquired) return true;
+    if (depth > 2) return false;
 
     try {
       // mkdirSync is atomic on POSIX and Windows — fails if already exists
@@ -25,7 +26,7 @@ export class Lockfile {
       // Check for stale lock
       if (this.isStale()) {
         this.forceRelease();
-        return this.acquire();
+        return this.acquire(depth + 1);
       }
       return false;
     }
@@ -50,6 +51,15 @@ export class Lockfile {
     try {
       const stat = statSync(this.lockDir);
       const age = Date.now() - stat.mtimeMs;
+      // Check if the holding process is still alive via PID file
+      const pidPath = join(this.lockDir, 'pid');
+      if (existsSync(pidPath)) {
+        const pid = parseInt(readFileSync(pidPath, 'utf8').trim(), 10);
+        if (!isNaN(pid)) {
+          try { process.kill(pid, 0); return false; } // process alive = not stale
+          catch { return true; } // process dead = stale regardless of age
+        }
+      }
       return age > STALE_THRESHOLD_MS;
     } catch {
       return false;

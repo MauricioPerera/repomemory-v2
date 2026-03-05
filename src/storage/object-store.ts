@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { RepoMemoryError } from '../types/errors.js';
 import { safeJsonParse, safeJsonStringify } from '../serialization/json.js';
+import { atomicWriteFileSync } from './atomic-write.js';
 
 export interface StoredObject {
   type: string;
@@ -26,7 +27,7 @@ export class ObjectStore {
     const path = this.hashPath(hash);
     if (!existsSync(path)) {
       mkdirSync(join(this.dir, hash.slice(0, 2)), { recursive: true });
-      writeFileSync(path, content, 'utf8');
+      atomicWriteFileSync(path, content);
     }
     return hash;
   }

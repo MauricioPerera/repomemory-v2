@@ -32,6 +32,29 @@ export class KnowledgeCollection extends BaseCollection<Knowledge> {
     return this.find(agentId, undefined, query, limit);
   }
 
+  saveOrUpdate(
+    agentId: string,
+    input: Record<string, unknown>,
+    dedupThreshold = 0.2,
+  ): [Knowledge, CommitInfo, { deduplicated: boolean }] {
+    const content = input.content as string;
+    const candidates = this.find(agentId, undefined, content, 5);
+    for (const { entity, score } of candidates) {
+      if (score >= dedupThreshold) {
+        const [updated, commit] = this.update(entity.id, {
+          content,
+          tags: (input.tags as string[]) ?? entity.tags,
+          source: input.source ?? entity.source,
+          version: input.version ?? entity.version,
+          questions: input.questions ?? entity.questions,
+        });
+        return [updated, commit, { deduplicated: true }];
+      }
+    }
+    const [saved, commit] = this.save(agentId, undefined, input);
+    return [saved, commit, { deduplicated: false }];
+  }
+
   saveShared(input: Record<string, unknown>): [Knowledge, CommitInfo] {
     return this.save(SHARED_AGENT_ID, undefined, input);
   }

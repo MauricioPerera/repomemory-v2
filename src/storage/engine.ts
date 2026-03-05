@@ -135,6 +135,35 @@ export class StorageEngine {
     return entities;
   }
 
+  countEntities(type: EntityType, agentId: string, userId?: string): number {
+    const scope = this.buildScope(type, agentId, userId);
+    const entries = this.lookup.list(scope);
+    let count = 0;
+    for (const [, refPath] of entries) {
+      const ref = this.refs.get(refPath);
+      if (!ref) continue;
+      const commit = this.commits.read(ref.head);
+      if (commit.objectHash !== TOMBSTONE) count++;
+    }
+    return count;
+  }
+
+  listEntitiesPaginated(type: EntityType, agentId: string, userId: string | undefined, limit: number, offset: number): { items: Entity[]; total: number } {
+    const scope = this.buildScope(type, agentId, userId);
+    const entries = [...this.lookup.list(scope)];
+    const alive: Entity[] = [];
+    for (const [, refPath] of entries) {
+      const ref = this.refs.get(refPath);
+      if (!ref) continue;
+      const commit = this.commits.read(ref.head);
+      if (commit.objectHash === TOMBSTONE) continue;
+      alive.push(this.objects.read(commit.objectHash).data as Entity);
+    }
+    const total = alive.length;
+    const items = alive.slice(offset, offset + limit);
+    return { items, total };
+  }
+
   listEntitiesByPrefix(prefix: string): Entity[] {
     const entries = this.lookup.listByPrefix(prefix);
     const entities: Entity[] = [];

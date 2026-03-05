@@ -30,6 +30,29 @@ export class SkillCollection extends BaseCollection<Skill> {
     return this.find(agentId, undefined, query, limit);
   }
 
+  saveOrUpdate(
+    agentId: string,
+    input: Record<string, unknown>,
+    dedupThreshold = 0.2,
+  ): [Skill, CommitInfo, { deduplicated: boolean }] {
+    const content = input.content as string;
+    const category = (input.category as string) ?? 'procedure';
+    const candidates = this.find(agentId, undefined, content, 5);
+    for (const { entity, score } of candidates) {
+      if (entity.category === category && score >= dedupThreshold) {
+        const [updated, commit] = this.update(entity.id, {
+          content,
+          tags: (input.tags as string[]) ?? entity.tags,
+          category,
+          status: (input.status as string) ?? entity.status,
+        });
+        return [updated, commit, { deduplicated: true }];
+      }
+    }
+    const [saved, commit] = this.save(agentId, undefined, input);
+    return [saved, commit, { deduplicated: false }];
+  }
+
   saveShared(input: Record<string, unknown>): [Skill, CommitInfo] {
     return this.save(SHARED_AGENT_ID, undefined, input);
   }

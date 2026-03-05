@@ -17,8 +17,9 @@ RepoMemory provides persistent, versioned memory for AI agents. Every change is 
 - **Incremental TF-IDF search** — cached to disk, updated incrementally on writes, Jaccard tag overlap, Porter stemming
 - **Query expansion** — automatic synonym/abbreviation mapping (e.g., "ts config" matches "TypeScript configuration")
 - **Configurable scoring** — tunable weights for TF-IDF, tag overlap, decay rate, and access boost cap
-- **Deduplication** — `saveOrUpdate()` detects similar content with configurable threshold
-- **Batch operations** — `saveMany()` and `incrementMany()` for bulk writes with single flush. `saveMany()` emits `entity:save` per item
+- **Deduplication** — `saveOrUpdate()` on memories, skills, and knowledge detects similar content with configurable threshold
+- **Batch operations** — `saveMany()`, `deleteMany()`, and `incrementMany()` for bulk writes with single flush. `saveMany()` emits `entity:save` per item
+- **Pagination** — `listPaginated()` and `count()` for efficient listing with `limit`/`offset`/`hasMore`
 - **Event system** — typed event bus for entity lifecycle hooks (`entity:save`, `entity:update`, `entity:delete`, `session:mined`, `consolidation:done`). Handler errors are caught internally and never crash core operations
 - **TTL cleanup** — remove stale entities by age, with dry-run support and audit log rotation
 - **File locking** — filesystem-based mutex wraps every `save()` and `delete()` for concurrent access safety (configurable via `lockEnabled`)
@@ -107,10 +108,13 @@ Each collection provides CRUD + search:
 | `get` | `(entityId)` | `Entity \| null` |
 | `update` | `(entityId, updates)` | `[Entity, CommitInfo]` |
 | `delete` | `(entityId)` | `CommitInfo` |
+| `deleteMany` | `(entityIds[])` | `CommitInfo[]` |
 | `list` | `(agentId, userId?)` | `Entity[]` |
+| `listPaginated` | `(agentId, userId?, { limit?, offset? })` | `ListResult<Entity>` |
+| `count` | `(agentId, userId?)` | `number` |
 | `history` | `(entityId)` | `CommitInfo[]` |
 
-`mem.memories` also has `saveOrUpdate(agentId, userId, input)` which deduplicates automatically, and `search()` which tracks access counts.
+All collections also have `listPaginated(agentId, userId?, { limit?, offset? })`, `count(agentId, userId?)`, and `deleteMany(entityIds)`. Memories, skills, and knowledge have `saveOrUpdate()` for automatic deduplication.
 
 ##### `mem.memories`
 
@@ -156,6 +160,13 @@ mem.skills.search('agent-1', 'deploy', 10, true);
 // Save a shared skill (accessible by all agents)
 mem.skills.saveShared({ content: 'Common deploy procedure', tags: ['deploy'] });
 
+// Save or update (deduplicates by category + content similarity)
+const [skill, , { deduplicated }] = mem.skills.saveOrUpdate('agent-1', {
+  content: 'Deploy with Docker Compose',
+  tags: ['deploy', 'docker'],
+  category: 'procedure',
+});
+
 // List only shared skills
 mem.skills.listShared();
 ```
@@ -180,6 +191,27 @@ mem.knowledge.search('agent-1', 'rate limit', 10, true);
 // Save/list shared knowledge
 mem.knowledge.saveShared({ content: 'Common API docs', tags: ['api'] });
 mem.knowledge.listShared();
+
+// Dedup: updates existing if similar content found
+mem.knowledge.saveOrUpdate('agent-1', {
+  content: 'API rate limit increased to 200 req/min',
+  tags: ['api'],
+  source: 'docs/api-v2.md',
+});
+```
+
+##### Pagination & Bulk Operations
+
+```ts
+// Paginated listing (any collection)
+const page = mem.memories.listPaginated('agent-1', 'user-1', { limit: 20, offset: 0 });
+// → { items: Memory[], total: 150, limit: 20, offset: 0, hasMore: true }
+
+// Count without loading all entities
+const total = mem.memories.count('agent-1', 'user-1');
+
+// Bulk delete
+mem.memories.deleteMany(['memory-abc123', 'memory-def456']);
 ```
 
 ##### `mem.sessions`
@@ -456,9 +488,10 @@ RepoMemory (facade)
 |   +-- RecallFormatter    Structured text output for LLM system prompts
 |
 +-- Collections (typed CRUD facades)
-|   +-- MemoryCollection   facts, decisions, issues, tasks (+ saveOrUpdate dedup)
-|   +-- SkillCollection    procedures, config, troubleshooting, workflows
-|   +-- KnowledgeCollection  source, chunks, versions, questions
+|   +-- MemoryCollection     facts, decisions, issues, tasks (+ saveOrUpdate dedup)
+|   +-- SkillCollection      procedures, config, troubleshooting, workflows (+ saveOrUpdate dedup)
+|   +-- KnowledgeCollection  source, chunks, versions, questions (+ saveOrUpdate dedup)
+|   +-- BaseCollection       save/get/update/delete/list/listPaginated/count/deleteMany/saveMany
 |   +-- SessionCollection  conversations, structured messages, mined flag
 |   +-- ProfileCollection  per agent/user profiles with metadata
 |
@@ -535,6 +568,21 @@ The TF-IDF index is cached to disk and updated incrementally — no full rebuild
 
 ## Changelog
 
+### v2.4.0
+
+**Dedup, Pagination & Bulk Deletes**
+
+- **`saveOrUpdate()` for skills and knowledge**: Skills and knowledge now have deduplication via `saveOrUpdate(agentId, input, threshold?)`. Same pattern as memories: searches for similar content, updates if above threshold, creates new otherwise. Skills match on same category; knowledge matches on score only.
+- **Paginated listing**: New `listPaginated(agentId, userId?, { limit?, offset? })` returns `{ items, total, limit, offset, hasMore }`. Default limit is 50. The original `list()` remains for backwards compatibility.
+- **`count()`**: New `count(agentId, userId?)` returns total entity count without loading all entities into memory.
+- **`deleteMany()`**: New `deleteMany(entityIds)` deletes multiple entities in a single call with one flush. Skips non-existent IDs gracefully. Emits `entity:delete` for each deletion.
+
+**New Types**
+- `ListOptions { limit?, offset? }`, `ListResult<T> { items, total, limit, offset, hasMore }`
+
+**Tests**
+- Added 19 new tests covering saveOrUpdate for skills/knowledge, pagination, count, and deleteMany (total: 208 tests across 18 files)
+
 ### v2.3.0
 
 **Search Quality Improvements** — Major upgrades to the no-embeddings search pipeline.
@@ -609,7 +657,7 @@ npm run build        # Build ESM + .d.ts + sourcemaps (tsup)
 
 ### Running Tests
 
-Tests use temporary directories and clean up after themselves. 189 tests across 17 files:
+Tests use temporary directories and clean up after themselves. 208 tests across 18 files:
 
 - **Unit tests**: tokenizer, TF-IDF, scoring, JSON serialization, CLI parser
 - **Storage tests**: object store, commit store, ref store, engine, snapshots
@@ -617,6 +665,7 @@ Tests use temporary directories and clean up after themselves. 189 tests across 
 - **Simulation tests**: full agent workflow (onboarding, search, deletion, history)
 - **v2.2 feature tests**: recall engine, events, structured sessions, cleanup, file locking, dedup threshold, AI validation, access tracking, NaN guards, ESM compatibility
 - **v2.3 search tests**: Porter stemmer, query expansion, configurable scoring weights, access boost cap, score-based recall budget, index diagnostics
+- **v2.4 gap tests**: saveOrUpdate for skills/knowledge, pagination, count, deleteMany, event emission on bulk ops
 - **Benchmarks**: save/saveMany throughput, search latency
 
 ```bash

@@ -6,7 +6,7 @@ import { computeScore, computeTagOverlap, daysBetween } from '../search/scoring.
 import type { ScoringWeights } from '../search/scoring.js';
 import { expandQuery } from '../search/query-expander.js';
 import type { Entity, EntityType } from '../types/entities.js';
-import type { SearchResult, CommitInfo } from '../types/results.js';
+import type { SearchResult, CommitInfo, ListOptions, ListResult } from '../types/results.js';
 import { RepoMemoryError } from '../types/errors.js';
 import type { RepoMemoryEventBus } from '../events.js';
 
@@ -108,6 +108,24 @@ export abstract class BaseCollection<T extends Entity> {
     return commit;
   }
 
+  deleteMany(entityIds: string[]): CommitInfo[] {
+    const commits: CommitInfo[] = [];
+    for (const entityId of entityIds) {
+      const entity = this.get(entityId);
+      if (!entity) continue;
+      const agentId = (entity as unknown as { agentId: string }).agentId;
+      const userId = 'userId' in entity ? (entity as unknown as { userId: string }).userId : undefined;
+      this.searchEngine.removeEntity(this.searchScope(agentId, userId), entityId);
+      if (this.accessTracker) this.accessTracker.remove(entityId);
+      const commit = this.storage.delete(entity);
+      if (this.eventBus) this.eventBus.emit('entity:delete', { entityId, entityType: this.entityType, commit });
+      commits.push(commit);
+    }
+    this.searchEngine.flush();
+    if (this.accessTracker) this.accessTracker.flush();
+    return commits;
+  }
+
   list(agentId: string, userId?: string): T[] {
     const entities = this.storage.listEntities(this.entityType, agentId, userId) as T[];
     if (this.accessTracker) {
@@ -118,6 +136,25 @@ export abstract class BaseCollection<T extends Entity> {
       }
     }
     return entities;
+  }
+
+  listPaginated(agentId: string, userId: string | undefined, options?: ListOptions): ListResult<T> {
+    const limit = options?.limit ?? 50;
+    const offset = options?.offset ?? 0;
+    const { items, total } = this.storage.listEntitiesPaginated(this.entityType, agentId, userId, limit, offset);
+    const entities = items as T[];
+    if (this.accessTracker) {
+      for (const entity of entities) {
+        if ('accessCount' in entity) {
+          (entity as unknown as Record<string, unknown>).accessCount = this.accessTracker.get(entity.id);
+        }
+      }
+    }
+    return { items: entities, total, limit, offset, hasMore: offset + limit < total };
+  }
+
+  count(agentId: string, userId?: string): number {
+    return this.storage.countEntities(this.entityType, agentId, userId);
   }
 
   find(agentId: string, userId: string | undefined, query: string, limit = 10): SearchResult<T>[] {

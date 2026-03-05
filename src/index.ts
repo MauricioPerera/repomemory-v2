@@ -195,7 +195,7 @@ export type { RepoMemoryConfig } from './types/config.js';
 export { SHARED_AGENT_ID } from './types/entities.js';
 export type { Memory, Skill, Knowledge, Session, Profile, Entity, EntityType, SessionMessage } from './types/entities.js';
 export type { SaveMemoryInput, SaveSkillInput, SaveKnowledgeInput, SaveSessionInput, SaveProfileInput } from './types/entities.js';
-export type { SearchResult, CommitInfo, RefInfo, SnapshotInfo, VerifyResult, MiningResult, ConsolidationReport, SkillConsolidationReport, KnowledgeConsolidationReport, RecallContext, RecallOptions } from './types/results.js';
+export type { SearchResult, CommitInfo, RefInfo, SnapshotInfo, VerifyResult, MiningResult, ConsolidationReport, SkillConsolidationReport, KnowledgeConsolidationReport, RecallContext, RecallOptions, ListOptions, ListResult } from './types/results.js';
 export type { AiProvider, AiMessage } from './types/ai.js';
 export { RepoMemoryError } from './types/errors.js';
 export type { ErrorCode } from './types/errors.js';

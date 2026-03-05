@@ -62,6 +62,19 @@ export interface VerifyResult {
   errors: string[];
 }
 
+export interface ListOptions {
+  limit?: number;
+  offset?: number;
+}
+
+export interface ListResult<T extends Entity> {
+  items: T[];
+  total: number;
+  limit: number;
+  offset: number;
+  hasMore: boolean;
+}
+
 export interface RecallOptions {
   maxItems?: number;
   maxChars?: number;

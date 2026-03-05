@@ -18,6 +18,7 @@ RepoMemory provides persistent, versioned memory for AI agents. Every change is 
 - **Optional AI** — mining and consolidation (memories, skills, knowledge) via OpenAI, Anthropic, or Ollama
 - **Zero runtime dependencies** — only Node.js built-ins (`node:fs`, `node:path`, `node:crypto`, `fetch`)
 - **Library + CLI** — import as a TypeScript library or use from the command line
+- **Cross-platform** — works on Windows, macOS, and Linux
 
 ## Install
 
@@ -302,7 +303,9 @@ repomemory verify
 
 All commands accept `--dir <path>` to specify the storage directory (default: `.repomemory`).
 
-## Storage Layout
+## Architecture
+
+### Storage Layout
 
 ```
 .repomemory/
@@ -318,8 +321,8 @@ All commands accept `--dir <path>` to specify the storage directory (default: `.
     sessions/{agentId}/{userId}/{entityId}.ref
     profiles/{agentId}/{userId}.ref
   index/
-    tfidf/                         # Serialized TF-IDF indices
-    lookup/                        # id → refPath mappings (with global reverse index)
+    tfidf/                         # Serialized TF-IDF indices per scope
+    lookup/                        # id -> refPath mappings (URI-encoded filenames)
     access-counts.json             # Access count side-index
   snapshots/                       # Point-in-time snapshots (full copy)
   log/operations.jsonl             # Append-only audit log
@@ -327,31 +330,102 @@ All commands accept `--dir <path>` to specify the storage directory (default: `.
 
 ### How a save works
 
-1. Entity data → `objectHash = sha256(serialized)` → written to `objects/`
+1. Entity data -> `objectHash = sha256(serialized)` -> written to `objects/`
 2. Existing ref read to get `parentHash`
-3. Commit created: `{ parent, objectHash, timestamp, author, message }` → written to `commits/`
+3. Commit created: `{ parent, objectHash, timestamp, author, message }` -> written to `commits/`
 4. Ref updated to point to new commit
 5. Lookup index and TF-IDF index updated incrementally
 6. Operation appended to audit log
 
 Deletes create a tombstone commit (`objectHash: "TOMBSTONE"`). The ref points to the tombstone commit and the full commit chain is preserved, so `history()` works after deletion.
 
-## Search Scoring
+### Component Diagram
+
+```
+RepoMemory (facade)
+|
++-- Storage Layer
+|   +-- ObjectStore        Content-addressable SHA-256 blobs (2-char prefix dirs)
+|   +-- CommitStore        Immutable linked list of commits per entity
+|   +-- RefStore           HEAD pointers: ref -> latest commit hash
+|   +-- LookupIndex        Global entityId -> refPath reverse index
+|   +-- AccessTracker      Access counts per entity (no commits, side-index)
+|   +-- AuditLog           Append-only operation log (JSONL)
+|   +-- SnapshotManager    Full point-in-time backups
+|
++-- Search Layer
+|   +-- SearchEngine       Scoped TF-IDF indices, persisted to disk
+|   +-- TfIdfIndex         Term frequency-inverse document frequency with serialization
+|   +-- Tokenizer          Word tokenization with stopwords (EN + ES)
+|   +-- Scoring            Composite: TF-IDF + Jaccard tags + decay + access boost
+|
++-- Collections (typed CRUD facades)
+|   +-- MemoryCollection   facts, decisions, issues, tasks (+ saveOrUpdate dedup)
+|   +-- SkillCollection    procedures, config, troubleshooting, workflows
+|   +-- KnowledgeCollection  source, chunks, versions, questions
+|   +-- SessionCollection  conversations, mined flag, conversationId grouping
+|   +-- ProfileCollection  per agent/user profiles with metadata
+|
++-- AI Pipelines (optional, lazy-loaded)
+|   +-- MiningPipeline              Extract memories + skills + profile from session
+|   +-- ConsolidationPipeline       Merge/dedup memories by category (chunks of 20)
+|   +-- SkillConsolidationPipeline  Merge/dedup skills by category
+|   +-- KnowledgeConsolidationPipeline  Merge/dedup knowledge items
+|
++-- AI Providers (sub-export: repomemory/ai)
+    +-- OllamaProvider     Local Ollama (default: llama3.1)
+    +-- OpenAiProvider     OpenAI API (default: gpt-4o-mini)
+    +-- AnthropicProvider  Anthropic Messages API (default: claude-sonnet-4-20250514)
+```
+
+### Search Scoring
 
 Scoring combines relevance, time decay, and access frequency:
 
 ```
-score = relevance × decay × accessBoost
+score = relevance * decay * accessBoost
 
-relevance   = tfidfScore × 0.7 + tagOverlap × 0.3
+relevance   = tfidfScore * 0.7 + tagOverlap * 0.3
 tagOverlap  = |intersection| / |union|    (Jaccard similarity)
-decay       = e^(-0.005 × daysSinceUpdate)
-accessBoost = 1 + log₂(1 + accessCount)
+decay       = e^(-0.005 * daysSinceUpdate)
+accessBoost = 1 + log2(1 + accessCount)
 ```
 
 The TF-IDF index is cached to disk and updated incrementally — no full rebuild on each search.
 
 **Note:** The combined score is not normalized to [0, 1]. TF-IDF values depend on corpus size and term distribution, and `accessBoost` amplifies the score further. Keep this in mind when setting absolute thresholds (e.g., dedup uses 0.2).
+
+### Design Decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| Content-addressable storage | Automatic dedup, integrity verification via hash |
+| Tombstone deletes | Preserve full history; `history()` works after deletion |
+| Scoped TF-IDF indices | Each `type:agentId:userId` scope has its own index for fast, isolated search |
+| URI-encoded lookup filenames | Cross-platform safety (`:` is invalid on Windows) |
+| Lazy-loaded AI pipelines | Core library works with zero cost when AI is not used |
+| Consolidation chunks of 20 | Keeps LLM context windows manageable |
+| Access count as side-index | Reads don't create commits (audit-free popularity tracking) |
+
+## Changelog
+
+### v2.1.0
+
+**Bug Fixes**
+- **Windows compatibility**: Fixed `EINVAL` errors caused by `:` in lookup index filenames. Scope filenames now use `encodeURIComponent` for cross-platform safety (`memories:agent1:user1` -> `memories%3Aagent1%3Auser1.json`). This was causing all storage operations to fail on Windows.
+
+**Refactoring**
+- **Consolidation pipelines**: Extracted `BaseConsolidationPipeline<T>` abstract class to eliminate code duplication across `ConsolidationPipeline`, `SkillConsolidationPipeline`, and `KnowledgeConsolidationPipeline`. Reduced ~267 lines to ~175 lines (35% less) with zero API changes. Shared logic (chunking, chunk processing, merge/delete) lives in the base class; subclasses only define collection-specific behavior.
+
+### v2.0.0
+
+- Complete rewrite from scratch
+- Content-addressable storage with immutable commit chains
+- 5 entity types with typed collections
+- TF-IDF search with composite scoring
+- AI pipelines for mining and consolidation
+- CLI with all operations
+- Zero runtime dependencies
 
 ## Development
 
@@ -359,6 +433,22 @@ The TF-IDF index is cached to disk and updated incrementally — no full rebuild
 npm run typecheck    # TypeScript strict check
 npm test             # Run all tests (Vitest)
 npm run build        # Build ESM + .d.ts + sourcemaps (tsup)
+```
+
+### Running Tests
+
+Tests use temporary directories and clean up after themselves. The full suite includes:
+
+- **Unit tests**: tokenizer, TF-IDF, scoring, JSON serialization, CLI parser
+- **Storage tests**: object store, commit store, ref store, engine, snapshots
+- **Integration tests**: scoping, dedup, saveOrUpdate, batch operations
+- **Simulation tests**: full agent workflow (onboarding, search, deletion, history)
+- **Benchmarks**: save/saveMany throughput, search latency
+
+```bash
+npm test                    # Run all tests
+npx vitest run tests/search # Run only search tests
+npx vitest --watch          # Watch mode
 ```
 
 ## License

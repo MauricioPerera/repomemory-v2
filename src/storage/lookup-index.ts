@@ -73,7 +73,7 @@ export class LookupIndex {
 
   private getScope(scope: string): Map<string, string> {
     if (this.indices.has(scope)) return this.indices.get(scope)!;
-    const path = join(this.dir, `${scope}.json`);
+    const path = this.scopePath(scope);
     let map: Map<string, string>;
     if (existsSync(path)) {
       const data = safeJsonParse<Record<string, string>>(readFileSync(path, 'utf8'), {});
@@ -91,14 +91,17 @@ export class LookupIndex {
   private persist(scope: string): void {
     const map = this.indices.get(scope);
     if (!map) return;
-    const path = join(this.dir, `${scope}.json`);
-    atomicWriteFileSync(path, safeJsonStringify(Object.fromEntries(map)));
+    atomicWriteFileSync(this.scopePath(scope), safeJsonStringify(Object.fromEntries(map)));
+  }
+
+  private scopePath(scope: string): string {
+    return join(this.dir, `${encodeURIComponent(scope)}.json`);
   }
 
   private listScopeFiles(): string[] {
     if (!existsSync(this.dir)) return [];
     return readdirSync(this.dir)
       .filter(f => f.endsWith('.json'))
-      .map(f => f.replace('.json', ''));
+      .map(f => decodeURIComponent(f.replace('.json', '')));
   }
 }

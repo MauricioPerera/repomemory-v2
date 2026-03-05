@@ -61,6 +61,18 @@ export class SearchEngine {
     this.dirty.clear();
   }
 
+  /** Returns diagnostic info about loaded indices. */
+  indexStats(): { scopes: number; totalDocuments: number; scopeDetails: Array<{ scope: string; documents: number }> } {
+    let totalDocuments = 0;
+    const scopeDetails: Array<{ scope: string; documents: number }> = [];
+    for (const [scope, index] of this.indices) {
+      const docs = index.size;
+      totalDocuments += docs;
+      scopeDetails.push({ scope, documents: docs });
+    }
+    return { scopes: this.indices.size, totalDocuments, scopeDetails };
+  }
+
   private getIndex(scope: string): TfIdfIndex {
     if (this.indices.has(scope)) return this.indices.get(scope)!;
     const cachePath = this.cachePath(scope);

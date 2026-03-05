@@ -1,3 +1,5 @@
+import { stem } from './stemmer.js';
+
 const STOPWORDS = new Set([
   // English
   'a', 'an', 'the', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
@@ -25,7 +27,8 @@ export function tokenize(text: string): string[] {
     .toLowerCase()
     .replace(/[^\p{L}\p{N}\s]/gu, ' ')
     .split(/\s+/)
-    .filter(t => t.length > 1 && !STOPWORDS.has(t));
+    .filter(t => t.length > 1 && !STOPWORDS.has(t))
+    .map(t => stem(t));
 }
 
 export function extractTags(text: string): string[] {

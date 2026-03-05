@@ -14,7 +14,9 @@ RepoMemory provides persistent, versioned memory for AI agents. Every change is 
 - **Conversations** — group sessions by `conversationId`
 - **Structured sessions** — save raw transcript or structured `messages[]` with role/content/timestamp
 - **Recall engine** — single `recall()` call retrieves and formats relevant context across all collections
-- **Incremental TF-IDF search** — cached to disk, updated incrementally on writes, Jaccard tag overlap
+- **Incremental TF-IDF search** — cached to disk, updated incrementally on writes, Jaccard tag overlap, Porter stemming
+- **Query expansion** — automatic synonym/abbreviation mapping (e.g., "ts config" matches "TypeScript configuration")
+- **Configurable scoring** — tunable weights for TF-IDF, tag overlap, decay rate, and access boost cap
 - **Deduplication** — `saveOrUpdate()` detects similar content with configurable threshold
 - **Batch operations** — `saveMany()` and `incrementMany()` for bulk writes with single flush. `saveMany()` emits `entity:save` per item
 - **Event system** — typed event bus for entity lifecycle hooks (`entity:save`, `entity:update`, `entity:delete`, `session:mined`, `consolidation:done`). Handler errors are caught internally and never crash core operations
@@ -85,6 +87,12 @@ const mem = new RepoMemory({
   dedupThreshold: 0.2,       // optional — similarity threshold for saveOrUpdate (default: 0.2)
   maxSessionChars: 100_000,  // optional — max chars sent to AI mining (default: 100K)
   lockEnabled: true,         // optional — filesystem locking for concurrent access (default: true)
+  scoring: {                 // optional — tune search ranking behavior
+    tfidfWeight: 0.7,        // weight for TF-IDF relevance (default: 0.7)
+    tagWeight: 0.3,          // weight for tag overlap (default: 0.3)
+    decayRate: 0.005,        // decay per day; 0 = no decay (default: 0.005)
+    maxAccessBoost: 5.0,     // cap on access boost multiplier (default: 5.0)
+  },
 });
 ```
 
@@ -237,7 +245,7 @@ mem.flush();  // writes search indices + access counts to disk
 
 ```ts
 const ctx = mem.recall('agent-1', 'user-1', 'typescript deployment', {
-  maxItems: 20,              // max results per collection (default: 20)
+  maxItems: 20,              // max total results across all collections (default: 20)
   maxChars: 8000,            // max total chars in formatted output (default: 8000)
   includeProfile: true,      // include user profile (default: true)
   includeSharedSkills: true,  // include _shared skills (default: true)
@@ -302,7 +310,8 @@ const result = mem.verify();
 // { valid: true, totalObjects: 42, totalCommits: 38, errors: [] }
 
 const stats = mem.stats();
-// { memories: 15, skills: 3, knowledge: 8, sessions: 5, profiles: 2, objects: 42, commits: 38 }
+// { memories: 15, skills: 3, knowledge: 8, sessions: 5, profiles: 2, objects: 42, commits: 38,
+//   index: { scopes: 4, totalDocuments: 26, scopeDetails: [...] } }
 ```
 
 #### AI Integration (optional)
@@ -435,13 +444,15 @@ RepoMemory (facade)
 |   +-- LockGuard          Filesystem-based mutex wrapping save/delete (mkdir atomic + stale detection)
 |
 +-- Search Layer
-|   +-- SearchEngine       Scoped TF-IDF indices, persisted to disk
+|   +-- SearchEngine       Scoped TF-IDF indices, persisted to disk, with indexStats() diagnostics
 |   +-- TfIdfIndex         Term frequency-inverse document frequency with serialization
-|   +-- Tokenizer          Word tokenization with stopwords (EN + ES)
-|   +-- Scoring            Composite: TF-IDF + Jaccard tags + decay + access boost
+|   +-- Tokenizer          Word tokenization with Porter stemming + stopwords (EN + ES)
+|   +-- Stemmer            Porter 1980 English stemmer (zero deps)
+|   +-- QueryExpander      Synonym/abbreviation expansion (tech-focused: ts->typescript, k8s->kubernetes, etc.)
+|   +-- Scoring            Configurable composite: TF-IDF + Jaccard tags + decay + capped access boost
 |
 +-- Recall Layer
-|   +-- RecallEngine       Multi-collection query with budget-aware formatting + access tracking
+|   +-- RecallEngine       Score-based multi-collection query with budget-aware formatting + access tracking
 |   +-- RecallFormatter    Structured text output for LLM system prompts
 |
 +-- Collections (typed CRUD facades)
@@ -470,22 +481,36 @@ RepoMemory (facade)
     +-- AnthropicProvider  Anthropic Messages API (default: claude-sonnet-4-20250514)
 ```
 
-### Search Scoring
+### Search Pipeline
 
-Scoring combines relevance, time decay, and access frequency:
+Queries pass through a multi-stage pipeline before scoring:
+
+1. **Query expansion** — synonyms/abbreviations added (e.g., "ts" adds "typescript", "db" adds "database")
+2. **Tokenization** — lowercase, punctuation removal, stopword filtering (EN + ES)
+3. **Porter stemming** — reduces words to root form ("running" -> "run", "configurations" -> "configur")
+4. **TF-IDF scoring** — term frequency-inverse document frequency against indexed entities
+5. **Composite scoring** — combines TF-IDF with tag overlap, decay, and access boost
+
+### Search Scoring
 
 ```
 score = relevance * decay * accessBoost
 
-relevance   = tfidfScore * 0.7 + tagOverlap * 0.3
+relevance   = tfidfScore * tfidfWeight + tagOverlap * tagWeight
 tagOverlap  = |intersection| / |union|    (Jaccard similarity)
-decay       = e^(-0.005 * daysSinceUpdate)
-accessBoost = 1 + log2(1 + accessCount)
+decay       = e^(-decayRate * daysSinceUpdate)    (0 if decayRate = 0)
+accessBoost = min(1 + log2(1 + accessCount), maxAccessBoost)
 ```
+
+Default weights: `tfidfWeight=0.7`, `tagWeight=0.3`, `decayRate=0.005`, `maxAccessBoost=5.0`. All configurable via `scoring` config option.
 
 The TF-IDF index is cached to disk and updated incrementally — no full rebuild on each search.
 
 **Note:** The combined score is not normalized to [0, 1]. TF-IDF values depend on corpus size and term distribution, and `accessBoost` amplifies the score further. Keep this in mind when setting absolute thresholds (e.g., dedup uses 0.2).
+
+### Recall Budget Allocation
+
+`recall()` uses a **score-based budget** instead of splitting equally across collections. All candidates from memories, skills, and knowledge are pooled and sorted by composite score. The top `maxItems` results are selected regardless of which collection they came from. This means if your query matches 10 memories strongly but no skills, you get 10 memories (not 3+3+3).
 
 ### Design Decisions
 
@@ -499,11 +524,30 @@ The TF-IDF index is cached to disk and updated incrementally — no full rebuild
 | Consolidation chunks of 20 | Keeps LLM context windows manageable |
 | Access count as side-index | Reads don't create commits (audit-free popularity tracking) |
 | Budget-aware recall formatter | Fits context into LLM token limits without cutting items mid-text |
+| Porter stemming in tokenizer | "running" matches "run" — biggest search quality win without embeddings |
+| Query expansion (synonym map) | "ts config" finds "TypeScript configuration" — covers common dev abbreviations |
+| Configurable scoring weights | Tune TF-IDF/tag balance, decay rate, and access boost cap per deployment |
+| Score-based recall budget | Best results win regardless of collection — no wasted slots on low-quality matches |
+| Capped access boost (default 5x) | Prevents runaway popularity; old frequently-accessed items don't dominate forever |
 | Typed event bus with try-catch | Type-safe hooks without coupling consumers to internals; handler errors never crash core ops |
 | Strict schema validators on AI output | Catch malformed LLM responses before they corrupt storage; validates content, tags, categories |
 | mkdir-based file locking on save/delete | Atomic on all platforms; stale lock detection via mtime; wraps every write operation |
 
 ## Changelog
+
+### v2.3.0
+
+**Search Quality Improvements** — Major upgrades to the no-embeddings search pipeline.
+
+- **Porter stemmer**: All tokens are now stemmed during indexing and search. "running" matches "run", "configurations" matches "configuration", etc. This is the single biggest search quality improvement for a TF-IDF system without embeddings.
+- **Query expansion**: Automatic synonym/abbreviation mapping for technical terms. "ts config" expands to include "typescript", "configuration", "settings". Covers languages (ts/js/py/rb/rs), databases (pg/mongo/redis), devops (k8s/ci/cd), and common dev abbreviations (auth, api, env, deps, etc.). Bidirectional: "typescript" also expands to "ts".
+- **Configurable scoring weights**: New `scoring` config option with `tfidfWeight`, `tagWeight`, `decayRate`, and `maxAccessBoost`. Set `decayRate: 0` for no time decay (timeless skills). Default values unchanged from v2.2.x.
+- **Access boost cap**: Access boost is now capped at `maxAccessBoost` (default 5.0) to prevent runaway popularity. Previously, a frequently-accessed item could dominate search results indefinitely.
+- **Score-based recall budget**: `recall()` now pools all candidates from memories/skills/knowledge, sorts by composite score, and takes the top `maxItems`. Previously it split budget equally across collections, wasting slots when one collection had much better matches.
+- **Index diagnostics**: `stats()` now includes `index: { scopes, totalDocuments, scopeDetails }` for monitoring TF-IDF index health.
+
+**Tests**
+- Added 21 new tests covering stemmer, query expansion, scoring weights, access boost cap, recall budget, and index stats (total: 189 tests across 17 files)
 
 ### v2.2.1
 
@@ -565,13 +609,14 @@ npm run build        # Build ESM + .d.ts + sourcemaps (tsup)
 
 ### Running Tests
 
-Tests use temporary directories and clean up after themselves. 168 tests across 16 files:
+Tests use temporary directories and clean up after themselves. 189 tests across 17 files:
 
 - **Unit tests**: tokenizer, TF-IDF, scoring, JSON serialization, CLI parser
 - **Storage tests**: object store, commit store, ref store, engine, snapshots
 - **Integration tests**: scoping, dedup, saveOrUpdate, batch operations
 - **Simulation tests**: full agent workflow (onboarding, search, deletion, history)
 - **v2.2 feature tests**: recall engine, events, structured sessions, cleanup, file locking, dedup threshold, AI validation, access tracking, NaN guards, ESM compatibility
+- **v2.3 search tests**: Porter stemmer, query expansion, configurable scoring weights, access boost cap, score-based recall budget, index diagnostics
 - **Benchmarks**: save/saveMany throughput, search latency
 
 ```bash

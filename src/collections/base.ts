@@ -3,6 +3,8 @@ import { StorageEngine } from '../storage/engine.js';
 import { SearchEngine } from '../search/search-engine.js';
 import { AccessTracker } from '../storage/access-tracker.js';
 import { computeScore, computeTagOverlap, daysBetween } from '../search/scoring.js';
+import type { ScoringWeights } from '../search/scoring.js';
+import { expandQuery } from '../search/query-expander.js';
 import type { Entity, EntityType } from '../types/entities.js';
 import type { SearchResult, CommitInfo } from '../types/results.js';
 import { RepoMemoryError } from '../types/errors.js';
@@ -10,6 +12,7 @@ import type { RepoMemoryEventBus } from '../events.js';
 
 export abstract class BaseCollection<T extends Entity> {
   protected eventBus?: RepoMemoryEventBus;
+  protected scoringWeights?: ScoringWeights;
 
   constructor(
     protected readonly storage: StorageEngine,
@@ -17,6 +20,10 @@ export abstract class BaseCollection<T extends Entity> {
     protected readonly entityType: EntityType,
     protected readonly accessTracker?: AccessTracker,
   ) {}
+
+  setScoringWeights(weights: ScoringWeights): void {
+    this.scoringWeights = weights;
+  }
 
   setEventBus(eventBus: RepoMemoryEventBus): void {
     this.eventBus = eventBus;
@@ -115,8 +122,9 @@ export abstract class BaseCollection<T extends Entity> {
 
   find(agentId: string, userId: string | undefined, query: string, limit = 10): SearchResult<T>[] {
     const scope = this.searchScope(agentId, userId);
-    const ranked = this.searchEngine.rank(scope, query, limit * 3);
-    const queryTags = query.toLowerCase().split(/\s+/).filter(t => t.length > 1);
+    const expanded = expandQuery(query);
+    const ranked = this.searchEngine.rank(scope, expanded, limit * 3);
+    const queryTags = expanded.toLowerCase().split(/\s+/).filter(t => t.length > 1);
     const now = new Date();
 
     const scored: SearchResult<T>[] = [];
@@ -132,6 +140,7 @@ export abstract class BaseCollection<T extends Entity> {
         tagOverlap: computeTagOverlap(tags, queryTags),
         daysSinceUpdate: daysBetween(entity.updatedAt, now),
         accessCount,
+        weights: this.scoringWeights,
       });
 
       scored.push({ entity, score });
@@ -142,8 +151,9 @@ export abstract class BaseCollection<T extends Entity> {
   }
 
   findMultiScope(scopes: string[], query: string, limit = 10): SearchResult<T>[] {
-    const ranked = this.searchEngine.rankMultiScope(scopes, query, limit * 3);
-    const queryTags = query.toLowerCase().split(/\s+/).filter(t => t.length > 1);
+    const expanded = expandQuery(query);
+    const ranked = this.searchEngine.rankMultiScope(scopes, expanded, limit * 3);
+    const queryTags = expanded.toLowerCase().split(/\s+/).filter(t => t.length > 1);
     const now = new Date();
 
     const scored: SearchResult<T>[] = [];
@@ -159,6 +169,7 @@ export abstract class BaseCollection<T extends Entity> {
         tagOverlap: computeTagOverlap(tags, queryTags),
         daysSinceUpdate: daysBetween(entity.updatedAt, now),
         accessCount,
+        weights: this.scoringWeights,
       });
 
       scored.push({ entity, score });

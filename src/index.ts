@@ -52,9 +52,15 @@ export class RepoMemory {
     this.sessions = new SessionCollection(this.storage, this.searchEngine);
     this.profiles = new ProfileCollection(this.storage, this.searchEngine);
 
-    // Wire event bus to all collections
+    // Wire event bus and scoring weights to all collections
+    const scorableCollections = [this.memories, this.skills, this.knowledge];
     for (const col of [this.memories, this.skills, this.knowledge, this.sessions, this.profiles]) {
       col.setEventBus(this.events);
+    }
+    if (config.scoring) {
+      for (const col of scorableCollections) {
+        col.setScoringWeights(config.scoring);
+      }
     }
   }
 
@@ -166,7 +172,11 @@ export class RepoMemory {
     };
   }
 
-  stats(): { memories: number; skills: number; knowledge: number; sessions: number; profiles: number; objects: number; commits: number } {
+  stats(): {
+    memories: number; skills: number; knowledge: number; sessions: number; profiles: number;
+    objects: number; commits: number;
+    index: { scopes: number; totalDocuments: number; scopeDetails: Array<{ scope: string; documents: number }> };
+  } {
     return {
       memories: this.storage.refs.list('memories').length,
       skills: this.storage.refs.list('skills').length,
@@ -175,6 +185,7 @@ export class RepoMemory {
       profiles: this.storage.refs.list('profiles').length,
       objects: this.storage.objects.listAll().length,
       commits: this.storage.commits.listAll().length,
+      index: this.searchEngine.indexStats(),
     };
   }
 }
@@ -190,3 +201,4 @@ export { RepoMemoryError } from './types/errors.js';
 export type { ErrorCode } from './types/errors.js';
 export type { RepoMemoryEvents, EventName, EventHandler } from './events.js';
 export type { CleanupOptions, CleanupReport } from './cleanup.js';
+export type { ScoringWeights } from './search/scoring.js';

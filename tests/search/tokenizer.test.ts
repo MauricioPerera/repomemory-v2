@@ -2,10 +2,10 @@ import { describe, it, expect } from 'vitest';
 import { tokenize, extractTags } from '../../src/search/tokenizer.js';
 
 describe('tokenize', () => {
-  it('tokenizes text and removes stopwords', () => {
+  it('tokenizes text, removes stopwords, and stems', () => {
     const tokens = tokenize('The user prefers TypeScript strict mode');
     expect(tokens).toContain('user');
-    expect(tokens).toContain('prefers');
+    expect(tokens).toContain('prefer'); // "prefers" → "prefer" (stemmed)
     expect(tokens).toContain('typescript');
     expect(tokens).toContain('strict');
     expect(tokens).toContain('mode');
@@ -30,9 +30,9 @@ describe('tokenize', () => {
 });
 
 describe('extractTags', () => {
-  it('extracts top terms as tags', () => {
+  it('extracts top stemmed terms as tags', () => {
     const tags = extractTags('TypeScript TypeScript configuration configuration configuration testing');
-    expect(tags[0]).toBe('configuration');
+    expect(tags[0]).toBe('configur'); // "configuration" → "configur" (stemmed)
     expect(tags[1]).toBe('typescript');
   });
 });

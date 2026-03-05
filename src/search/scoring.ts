@@ -1,15 +1,36 @@
+export interface ScoringWeights {
+  /** Weight for TF-IDF score (default 0.7) */
+  tfidfWeight?: number;
+  /** Weight for tag overlap (default 0.3) */
+  tagWeight?: number;
+  /** Decay rate per day (default 0.005). Higher = faster decay. 0 = no decay. */
+  decayRate?: number;
+  /** Maximum access boost multiplier (default 5.0). Prevents runaway popularity. */
+  maxAccessBoost?: number;
+}
+
+export const DEFAULT_SCORING_WEIGHTS: Required<ScoringWeights> = {
+  tfidfWeight: 0.7,
+  tagWeight: 0.3,
+  decayRate: 0.005,
+  maxAccessBoost: 5.0,
+};
+
 export interface ScoringParams {
   tfidfScore: number;
   tagOverlap: number;
   daysSinceUpdate: number;
   accessCount: number;
+  weights?: ScoringWeights;
 }
 
 export function computeScore(params: ScoringParams): number {
-  const { tfidfScore, tagOverlap, daysSinceUpdate, accessCount } = params;
-  const relevance = tfidfScore * 0.7 + tagOverlap * 0.3;
-  const decay = Math.exp(-0.005 * daysSinceUpdate);
-  const accessBoost = 1 + Math.log2(1 + accessCount);
+  const { tfidfScore, tagOverlap, daysSinceUpdate, accessCount, weights } = params;
+  const w = { ...DEFAULT_SCORING_WEIGHTS, ...weights };
+  const relevance = tfidfScore * w.tfidfWeight + tagOverlap * w.tagWeight;
+  const decay = w.decayRate === 0 ? 1 : Math.exp(-w.decayRate * daysSinceUpdate);
+  const rawBoost = 1 + Math.log2(1 + accessCount);
+  const accessBoost = Math.min(rawBoost, w.maxAccessBoost);
   return relevance * decay * accessBoost;
 }
 

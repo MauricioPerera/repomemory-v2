@@ -7,6 +7,13 @@ import {
   SKILL_CONSOLIDATION_SYSTEM, SKILL_CONSOLIDATION_USER,
   KNOWLEDGE_CONSOLIDATION_SYSTEM, KNOWLEDGE_CONSOLIDATION_USER,
 } from './prompts.js';
+import {
+  buildMiningMessages,
+  buildConsolidationMessages,
+  buildSkillConsolidationMessages,
+  buildKnowledgeConsolidationMessages,
+} from './prompts-compact.js';
+import { OllamaProvider } from './providers/ollama.js';
 
 export interface MiningExtraction {
   memories: Array<{ content: string; tags: string[]; category: string }>;
@@ -69,38 +76,80 @@ function validateConsolidationPlan(data: unknown): data is ConsolidationPlan {
 }
 
 export class AiService {
-  constructor(private readonly provider: AiProvider) {}
+  private readonly useCompactPrompts: boolean;
+
+  constructor(private readonly provider: AiProvider) {
+    this.useCompactPrompts = provider instanceof OllamaProvider;
+  }
 
   async extractFromSession(sessionContent: string): Promise<MiningExtraction> {
-    const messages: AiMessage[] = [
-      { role: 'system', content: MINING_SYSTEM },
-      { role: 'user', content: MINING_USER(sessionContent) },
-    ];
+    const messages = this.useCompactPrompts
+      ? buildMiningMessages(sessionContent)
+      : [
+          { role: 'system' as const, content: MINING_SYSTEM },
+          { role: 'user' as const, content: MINING_USER(sessionContent) },
+        ];
     return this.parseJsonWithRetry<MiningExtraction>(messages, validateMiningExtraction);
   }
 
   async planConsolidation(memoriesJson: string): Promise<ConsolidationPlan> {
-    const messages: AiMessage[] = [
-      { role: 'system', content: CONSOLIDATION_SYSTEM },
-      { role: 'user', content: CONSOLIDATION_USER(memoriesJson) },
-    ];
+    const messages = this.useCompactPrompts
+      ? buildConsolidationMessages(memoriesJson)
+      : [
+          { role: 'system' as const, content: CONSOLIDATION_SYSTEM },
+          { role: 'user' as const, content: CONSOLIDATION_USER(memoriesJson) },
+        ];
     return this.parseJsonWithRetry<ConsolidationPlan>(messages, validateConsolidationPlan);
   }
 
   async planSkillConsolidation(skillsJson: string): Promise<ConsolidationPlan> {
-    const messages: AiMessage[] = [
-      { role: 'system', content: SKILL_CONSOLIDATION_SYSTEM },
-      { role: 'user', content: SKILL_CONSOLIDATION_USER(skillsJson) },
-    ];
+    const messages = this.useCompactPrompts
+      ? buildSkillConsolidationMessages(skillsJson)
+      : [
+          { role: 'system' as const, content: SKILL_CONSOLIDATION_SYSTEM },
+          { role: 'user' as const, content: SKILL_CONSOLIDATION_USER(skillsJson) },
+        ];
     return this.parseJsonWithRetry<ConsolidationPlan>(messages, validateConsolidationPlan);
   }
 
   async planKnowledgeConsolidation(knowledgeJson: string): Promise<ConsolidationPlan> {
-    const messages: AiMessage[] = [
-      { role: 'system', content: KNOWLEDGE_CONSOLIDATION_SYSTEM },
-      { role: 'user', content: KNOWLEDGE_CONSOLIDATION_USER(knowledgeJson) },
-    ];
+    const messages = this.useCompactPrompts
+      ? buildKnowledgeConsolidationMessages(knowledgeJson)
+      : [
+          { role: 'system' as const, content: KNOWLEDGE_CONSOLIDATION_SYSTEM },
+          { role: 'user' as const, content: KNOWLEDGE_CONSOLIDATION_USER(knowledgeJson) },
+        ];
     return this.parseJsonWithRetry<ConsolidationPlan>(messages, validateConsolidationPlan);
+  }
+
+  /**
+   * Auto-fix common structural issues from small models:
+   * - merge/keep/remove as single object instead of array
+   * - missing keys with sensible defaults
+   */
+  private autoFixResponse(data: unknown): unknown {
+    if (typeof data !== 'object' || data === null) return data;
+    const obj = data as Record<string, unknown>;
+
+    // Fix consolidation responses: wrap single merge object in array
+    if ('merge' in obj && !Array.isArray(obj.merge) && typeof obj.merge === 'object' && obj.merge !== null) {
+      obj.merge = [obj.merge];
+    }
+    // Ensure keep/remove are arrays
+    if ('keep' in obj && !Array.isArray(obj.keep)) {
+      obj.keep = obj.keep ? [obj.keep] : [];
+    }
+    if ('remove' in obj && !Array.isArray(obj.remove)) {
+      obj.remove = obj.remove ? [obj.remove] : [];
+    }
+    // Ensure memories/skills are arrays (mining)
+    if ('memories' in obj && !Array.isArray(obj.memories)) {
+      obj.memories = obj.memories ? [obj.memories] : [];
+    }
+    if ('skills' in obj && !Array.isArray(obj.skills)) {
+      obj.skills = obj.skills ? [obj.skills] : [];
+    }
+    return obj;
   }
 
   private async parseJsonWithRetry<T>(
@@ -110,25 +159,31 @@ export class AiService {
     const response = await this.provider.chat(messages);
     const raw = this.extractJsonString(response);
     try {
-      const parsed = safeJsonParse<T>(raw);
+      let parsed = safeJsonParse<T>(raw);
+      if (this.useCompactPrompts) {
+        parsed = this.autoFixResponse(parsed) as T;
+      }
       if (validator && !validator(parsed)) {
         throw new Error('Response schema validation failed');
       }
       return parsed;
     } catch (e) {
       const errorDetail = e instanceof Error ? e.message : 'Invalid JSON';
+      const retryHint = this.useCompactPrompts
+        ? `Invalid JSON. Error: ${errorDetail}\nRespond with ONLY a JSON object like: {"memories":[...],"skills":[],"profile":null}\nNo explanation, ONLY JSON.`
+        : `Your response contained invalid or malformed JSON. Error: ${errorDetail}\n\nPlease fix and respond with ONLY valid JSON, no markdown, no explanation.`;
       const retryMessages: AiMessage[] = [
         ...messages,
         { role: 'assistant', content: response },
-        {
-          role: 'user',
-          content: `Your response contained invalid or malformed JSON. Error: ${errorDetail}\n\nPlease fix and respond with ONLY valid JSON, no markdown, no explanation.`,
-        },
+        { role: 'user', content: retryHint },
       ];
       const retryResponse = await this.provider.chat(retryMessages);
       const retryRaw = this.extractJsonString(retryResponse);
       try {
-        const parsed = safeJsonParse<T>(retryRaw);
+        let parsed = safeJsonParse<T>(retryRaw);
+        if (this.useCompactPrompts) {
+          parsed = this.autoFixResponse(parsed) as T;
+        }
         if (validator && !validator(parsed)) {
           throw new Error('Response schema validation failed after retry');
         }

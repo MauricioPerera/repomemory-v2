@@ -20,13 +20,16 @@ RepoMemory provides persistent, versioned memory for AI agents. Every change is 
 - **Deduplication** — `saveOrUpdate()` on memories, skills, and knowledge detects similar content with configurable threshold
 - **Batch operations** — `saveMany()`, `deleteMany()`, and `incrementMany()` for bulk writes with single flush. `saveMany()` emits `entity:save` per item
 - **Pagination** — `listPaginated()` and `count()` for efficient listing with `limit`/`offset`/`hasMore`
-- **Event system** — typed event bus for entity lifecycle hooks (`entity:save`, `entity:update`, `entity:delete`, `session:mined`, `consolidation:done`). Handler errors are caught internally and never crash core operations
+- **Event system** — typed event bus for entity lifecycle hooks (`entity:save`, `entity:update`, `entity:delete`, `session:mined`, `session:automine:error`, `consolidation:done`). Handler errors are caught internally and never crash core operations
 - **TTL cleanup** — remove stale entities by age, with dry-run support and audit log rotation
 - **File locking** — filesystem-based mutex wraps every `save()` and `delete()` for concurrent access safety (configurable via `lockEnabled`)
 - **AI validation** — strict schema validators on AI responses (non-empty content, typed tags, valid IDs) with automatic retry on malformed output
 - **Optional AI** — mining and consolidation (memories, skills, knowledge) via OpenAI, Anthropic, or Ollama
 - **Zero runtime dependencies** — only Node.js built-ins (`node:fs`, `node:path`, `node:crypto`, `fetch`)
-- **Library + CLI** — import as a TypeScript library or use from the command line
+- **MCP server** — expose all operations via Model Context Protocol (JSON-RPC 2.0 over stdio) for LLM tool-use integrations
+- **Auto-mining** — automatically extract memories/skills/profile when sessions are saved (`autoMine` config)
+- **Compact prompts** — configurable prompt strategy optimized for small reasoning models (<3B params)
+- **Library + CLI + MCP** — import as a TypeScript library, use from the command line, or connect via MCP
 - **Cross-platform** — works on Windows, macOS, and Linux
 
 ## Install
@@ -88,6 +91,8 @@ const mem = new RepoMemory({
   dedupThreshold: 0.2,       // optional — similarity threshold for saveOrUpdate (default: 0.2)
   maxSessionChars: 100_000,  // optional — max chars sent to AI mining (default: 100K)
   lockEnabled: true,         // optional — filesystem locking for concurrent access (default: true)
+  autoMine: false,           // optional — auto-mine sessions on save (requires ai, default: false)
+  compactPrompts: undefined, // optional — use compact prompts for small models (default: auto-detect)
   scoring: {                 // optional — tune search ranking behavior
     tfidfWeight: 0.7,        // weight for TF-IDF relevance (default: 0.7)
     tagWeight: 0.3,          // weight for tag overlap (default: 0.3)
@@ -303,6 +308,7 @@ mem.on('entity:save', ({ entity, commit }) => {
 mem.on('entity:update', ({ entity, commit }) => { /* ... */ });
 mem.on('entity:delete', ({ entityId, entityType, commit }) => { /* ... */ });
 mem.on('session:mined', ({ sessionId }) => { /* ... */ });
+mem.on('session:automine:error', ({ sessionId, error }) => { /* ... */ });
 mem.on('consolidation:done', ({ type, agentId }) => { /* ... */ });
 
 // Remove listener
@@ -376,6 +382,42 @@ const knowledgeReport = await mem.consolidateKnowledge('agent-1');
 // { agentId, merged: 1, removed: 1, kept: 8 }
 ```
 
+##### Auto-Mining
+
+When `autoMine: true` is set, RepoMemory automatically mines every session when it's saved — no manual `mine()` call needed:
+
+```ts
+const mem = new RepoMemory({
+  dir: '.repomemory',
+  ai: new OllamaProvider({ model: 'llama3.1' }),
+  autoMine: true,
+});
+
+// This save triggers mining automatically in the background
+mem.sessions.save('agent-1', 'user-1', {
+  content: 'User: How do I deploy?\nAssistant: Run docker compose up.',
+});
+
+// Listen for auto-mine errors (mining is fire-and-forget)
+mem.on('session:automine:error', ({ sessionId, error }) => {
+  console.error(`Auto-mine failed for ${sessionId}: ${error}`);
+});
+```
+
+##### Compact Prompts
+
+For small reasoning models (<3B params like Qwen 3.5 0.8B), compact prompts use shorter system messages and one-shot examples to save context window:
+
+```ts
+const mem = new RepoMemory({
+  dir: '.repomemory',
+  ai: new OllamaProvider({ model: 'qwen3:0.6b' }),
+  compactPrompts: true,  // force compact prompts
+});
+```
+
+By default, `compactPrompts` is auto-detected: `true` for Ollama providers, `false` for OpenAI/Anthropic. Set it explicitly to override.
+
 ##### Available Providers
 
 ```ts
@@ -421,6 +463,57 @@ repomemory verify
 ```
 
 All commands accept `--dir <path>` to specify the storage directory (default: `.repomemory`).
+
+## MCP Server
+
+RepoMemory includes a built-in [Model Context Protocol](https://modelcontextprotocol.io) server for LLM tool-use integrations. The server communicates via JSON-RPC 2.0 over stdio with Content-Length framing.
+
+### Running the MCP server
+
+```bash
+repomemory-mcp --dir .repomemory
+```
+
+### Configuring in your MCP client
+
+Add to your MCP client configuration (e.g., Claude Desktop, Cursor, etc.):
+
+```json
+{
+  "mcpServers": {
+    "repomemory": {
+      "command": "npx",
+      "args": ["repomemory-mcp", "--dir", "/path/to/.repomemory"]
+    }
+  }
+}
+```
+
+### Available Tools (21)
+
+| Tool | Description |
+|------|-------------|
+| `memory_save` | Save a new memory |
+| `memory_search` | Search memories by text query |
+| `memory_save_or_update` | Save or update (dedup) a memory |
+| `memory_list` | List all memories for agent/user |
+| `skill_save` | Save a new skill |
+| `skill_search` | Search skills by text query |
+| `skill_save_or_update` | Save or update (dedup) a skill |
+| `knowledge_save` | Save a knowledge entry |
+| `knowledge_search` | Search knowledge by text query |
+| `knowledge_save_or_update` | Save or update (dedup) knowledge |
+| `session_save` | Save a session transcript |
+| `session_list` | List sessions for agent/user |
+| `profile_save` | Save or update a user profile |
+| `profile_get` | Get a user's profile |
+| `recall` | Multi-collection context retrieval for LLM prompts |
+| `entity_get` | Get any entity by ID |
+| `entity_delete` | Delete any entity by ID |
+| `entity_history` | Get commit history for an entity |
+| `mine` | Extract memories/skills/profile from a session (requires AI provider) |
+| `stats` | Get storage statistics |
+| `verify` | Run integrity check |
 
 ## Architecture
 
@@ -496,7 +589,7 @@ RepoMemory (facade)
 |   +-- ProfileCollection  per agent/user profiles with metadata
 |
 +-- Event System
-|   +-- RepoMemoryEventBus  Typed EventEmitter wrapper with try-catch protection (entity:save/update/delete, session:mined, consolidation:done)
+|   +-- RepoMemoryEventBus  Typed EventEmitter wrapper with try-catch protection (entity:save/update/delete, session:mined, session:automine:error, consolidation:done)
 |
 +-- Cleanup
 |   +-- runCleanup          TTL-based entity removal with dry-run and audit rotation
@@ -509,9 +602,13 @@ RepoMemory (facade)
 |   +-- AiService                   Schema-validated JSON parsing with retry
 |
 +-- AI Providers (sub-export: repomemory/ai)
-    +-- OllamaProvider     Local Ollama (default: llama3.1)
-    +-- OpenAiProvider     OpenAI API (default: gpt-4o-mini)
-    +-- AnthropicProvider  Anthropic Messages API (default: claude-sonnet-4-20250514)
+|   +-- OllamaProvider     Local Ollama (default: llama3.1)
+|   +-- OpenAiProvider     OpenAI API (default: gpt-4o-mini)
+|   +-- AnthropicProvider  Anthropic Messages API (default: claude-sonnet-4-20250514)
+|
++-- MCP Server (bin: repomemory-mcp)
+    +-- handler.ts         Protocol logic: 21 tools, JSON-RPC dispatch (testable independently)
+    +-- mcp.ts             Stdio transport: Content-Length framing, buffer parsing
 ```
 
 ### Search Pipeline
@@ -567,6 +664,18 @@ The TF-IDF index is cached to disk and updated incrementally — no full rebuild
 | mkdir-based file locking on save/delete | Atomic on all platforms; stale lock detection via mtime; wraps every write operation |
 
 ## Changelog
+
+### v2.5.0
+
+**MCP Server, Auto-Mining & Compact Prompts**
+
+- **MCP server** (`repomemory-mcp`): Full Model Context Protocol server over stdio with Content-Length framed JSON-RPC 2.0. Exposes 21 tools covering all CRUD operations, search, recall, mining, stats, and integrity verification. Handler logic is separated from transport for testability.
+- **Auto-mining** (`autoMine` config): When enabled, sessions are automatically mined on save via the event bus. Fire-and-forget — errors emit `session:automine:error` instead of crashing. Requires an `ai` provider.
+- **Configurable compact prompts** (`compactPrompts` config): Explicit control over prompt strategy. Compact prompts use shorter system messages and one-shot examples optimized for small reasoning models (<3B params). Auto-detected by default (true for Ollama, false for OpenAI/Anthropic).
+- **New event**: `session:automine:error` — emitted when auto-mining fails, with `sessionId` and `error` message.
+
+**Tests**
+- Added 31 new tests: MCP handler (21 tools + protocol tests), auto-mining (7 scenarios), compact prompts. Total: 237 tests across 22 files.
 
 ### v2.4.0
 
@@ -657,7 +766,7 @@ npm run build        # Build ESM + .d.ts + sourcemaps (tsup)
 
 ### Running Tests
 
-Tests use temporary directories and clean up after themselves. 208 tests across 18 files:
+Tests use temporary directories and clean up after themselves. 237 tests across 22 files:
 
 - **Unit tests**: tokenizer, TF-IDF, scoring, JSON serialization, CLI parser
 - **Storage tests**: object store, commit store, ref store, engine, snapshots
@@ -666,6 +775,7 @@ Tests use temporary directories and clean up after themselves. 208 tests across 
 - **v2.2 feature tests**: recall engine, events, structured sessions, cleanup, file locking, dedup threshold, AI validation, access tracking, NaN guards, ESM compatibility
 - **v2.3 search tests**: Porter stemmer, query expansion, configurable scoring weights, access boost cap, score-based recall budget, index diagnostics
 - **v2.4 gap tests**: saveOrUpdate for skills/knowledge, pagination, count, deleteMany, event emission on bulk ops
+- **v2.5 feature tests**: MCP handler (21 tools, protocol, errors), auto-mining (7 scenarios with mock providers), compact prompts
 - **Benchmarks**: save/saveMany throughput, search latency
 
 ```bash

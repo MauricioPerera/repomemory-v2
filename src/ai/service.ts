@@ -78,8 +78,8 @@ function validateConsolidationPlan(data: unknown): data is ConsolidationPlan {
 export class AiService {
   private readonly useCompactPrompts: boolean;
 
-  constructor(private readonly provider: AiProvider) {
-    this.useCompactPrompts = provider instanceof OllamaProvider;
+  constructor(private readonly provider: AiProvider, compactPrompts?: boolean) {
+    this.useCompactPrompts = compactPrompts ?? (provider instanceof OllamaProvider);
   }
 
   async extractFromSession(sessionContent: string): Promise<MiningExtraction> {

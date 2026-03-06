@@ -12,4 +12,6 @@ export interface RepoMemoryConfig {
   scoring?: ScoringWeights;
   /** Automatically mine sessions when saved. Requires `ai` provider. Default: false */
   autoMine?: boolean;
+  /** Use compact prompts optimized for small models (<3B params). Default: auto-detect (true for Ollama, false otherwise) */
+  compactPrompts?: boolean;
 }

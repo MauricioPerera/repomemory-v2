@@ -112,7 +112,7 @@ export class RepoMemory {
       throw new RepoMemoryError('AI_NOT_CONFIGURED', 'AI provider required for mining');
     }
     const { MiningPipeline } = await import('./pipelines/mining.js');
-    const pipeline = new MiningPipeline(this.ai, this, { maxSessionChars: this.config.maxSessionChars });
+    const pipeline = new MiningPipeline(this.ai, this, { maxSessionChars: this.config.maxSessionChars, compactPrompts: this.config.compactPrompts });
     const result = await pipeline.run(sessionId);
     this.events.emit('session:mined', { sessionId });
     return result;
@@ -123,7 +123,7 @@ export class RepoMemory {
       throw new RepoMemoryError('AI_NOT_CONFIGURED', 'AI provider required for consolidation');
     }
     const { ConsolidationPipeline } = await import('./pipelines/consolidation.js');
-    const pipeline = new ConsolidationPipeline(this.ai, this);
+    const pipeline = new ConsolidationPipeline(this.ai, this, this.config.compactPrompts);
     const result = await pipeline.run(agentId, userId);
     this.events.emit('consolidation:done', { type: 'memories', agentId });
     return result;
@@ -134,7 +134,7 @@ export class RepoMemory {
       throw new RepoMemoryError('AI_NOT_CONFIGURED', 'AI provider required for consolidation');
     }
     const { SkillConsolidationPipeline } = await import('./pipelines/consolidation.js');
-    const pipeline = new SkillConsolidationPipeline(this.ai, this);
+    const pipeline = new SkillConsolidationPipeline(this.ai, this, this.config.compactPrompts);
     const result = await pipeline.run(agentId);
     this.events.emit('consolidation:done', { type: 'skills', agentId });
     return result;
@@ -145,7 +145,7 @@ export class RepoMemory {
       throw new RepoMemoryError('AI_NOT_CONFIGURED', 'AI provider required for consolidation');
     }
     const { KnowledgeConsolidationPipeline } = await import('./pipelines/consolidation.js');
-    const pipeline = new KnowledgeConsolidationPipeline(this.ai, this);
+    const pipeline = new KnowledgeConsolidationPipeline(this.ai, this, this.config.compactPrompts);
     const result = await pipeline.run(agentId);
     this.events.emit('consolidation:done', { type: 'knowledge', agentId });
     return result;

@@ -7,6 +7,7 @@ import { RepoMemoryError } from '../types/errors.js';
 
 export interface MiningPipelineOptions {
   maxSessionChars?: number;
+  compactPrompts?: boolean;
 }
 
 const DEFAULT_MAX_SESSION_CHARS = 100_000;
@@ -49,7 +50,7 @@ export class MiningPipeline {
   private readonly maxSessionChars: number;
 
   constructor(provider: AiProvider, private readonly repo: RepoMemory, options?: MiningPipelineOptions) {
-    this.aiService = new AiService(provider);
+    this.aiService = new AiService(provider, options?.compactPrompts);
     this.maxSessionChars = options?.maxSessionChars ?? DEFAULT_MAX_SESSION_CHARS;
   }
 

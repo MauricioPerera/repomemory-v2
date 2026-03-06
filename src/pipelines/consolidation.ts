@@ -11,8 +11,8 @@ interface ChunkResult { merged: number; removed: number; kept: number }
 abstract class BaseConsolidationPipeline<T extends Entity> {
   protected readonly aiService: AiService;
 
-  constructor(provider: AiProvider, protected readonly repo: RepoMemory) {
-    this.aiService = new AiService(provider);
+  constructor(provider: AiProvider, protected readonly repo: RepoMemory, compactPrompts?: boolean) {
+    this.aiService = new AiService(provider, compactPrompts);
   }
 
   protected abstract listItems(...args: string[]): T[];

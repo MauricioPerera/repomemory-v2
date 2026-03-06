@@ -11,11 +11,17 @@ import type { AiMessage } from '../types/ai.js';
 
 // ─── MINING ──────────────────────────────────────────────────────────
 
-const MINING_SYSTEM_COMPACT = `JSON extraction tool. Read conversation, output ONLY valid JSON following the exact schema.
+const MINING_SYSTEM_COMPACT = `JSON extraction tool. Read conversation, output ONLY valid JSON.
 
 Memory categories: fact, decision, issue, task
 Skill categories: procedure, configuration, troubleshooting, workflow
-Rules: output ONLY JSON. content=one sentence. tags=1-3 lowercase words. profile=null if unclear. Empty array [] if none found.`;
+Rules:
+- Output ONLY JSON, no text before or after
+- content = one clear sentence
+- tags = 1-3 lowercase words
+- profile = null if no user traits are evident
+- Empty array [] if none found for a category
+- Extract in the SAME language as the conversation`;
 
 const MINING_EXAMPLE_USER = `Extract:
 User: We use React 18 with TypeScript.
@@ -25,11 +31,9 @@ Assistant: Database connection pool set to 20.`;
 
 const MINING_EXAMPLE_ASSISTANT = `{"memories":[{"content":"The project uses React 18 with TypeScript","tags":["react","typescript"],"category":"fact"},{"content":"Tailwind CSS was configured for styling","tags":["tailwind","css"],"category":"fact"},{"content":"Team decided to use PostgreSQL as database","tags":["postgresql","database"],"category":"decision"},{"content":"Database connection pool configured to 20","tags":["database","pool"],"category":"fact"}],"skills":[{"content":"To deploy: run npm build then docker compose up","tags":["deploy","docker"],"category":"procedure"}],"profile":null}`;
 
-export function buildMiningMessages(sessionContent: string): AiMessage[] {
-  // Truncate very long sessions to fit in small model context window
-  const maxChars = 2000;
-  const truncated = sessionContent.length > maxChars
-    ? sessionContent.slice(-maxChars)
+export function buildMiningMessages(sessionContent: string, maxInputChars = 3000): AiMessage[] {
+  const truncated = sessionContent.length > maxInputChars
+    ? sessionContent.slice(-maxInputChars)
     : sessionContent;
 
   return [

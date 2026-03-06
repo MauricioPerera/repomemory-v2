@@ -6,7 +6,8 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "repomemory": "dist/cli.js"
+    "repomemory": "dist/cli.js",
+    "repomemory-mcp": "dist/mcp.js"
   },
   "exports": {
     ".": {

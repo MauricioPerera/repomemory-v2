@@ -10,4 +10,6 @@ export interface RepoMemoryConfig {
   lockEnabled?: boolean;
   /** Scoring weights for search ranking. Applied to all collections unless overridden. */
   scoring?: ScoringWeights;
+  /** Automatically mine sessions when saved. Requires `ai` provider. Default: false */
+  autoMine?: boolean;
 }

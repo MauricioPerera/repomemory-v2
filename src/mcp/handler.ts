@@ -309,6 +309,17 @@ export const tools: ToolDef[] = [
     },
   },
   {
+    name: 'mine',
+    description: 'Mine a session using AI to extract memories, skills, and profile updates. Requires AI provider configured on the server.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        sessionId: { type: 'string', description: 'ID of the session to mine' },
+      },
+      required: ['sessionId'],
+    },
+  },
+  {
     name: 'stats',
     description: 'Get storage statistics: entity counts, objects, commits, and index health.',
     inputSchema: { type: 'object', properties: {} },
@@ -335,7 +346,7 @@ function collectionFor(mem: RepoMemory, type: string) {
   }
 }
 
-export function handleTool(mem: RepoMemory, name: string, args: Record<string, unknown>): unknown {
+export async function handleTool(mem: RepoMemory, name: string, args: Record<string, unknown>): Promise<unknown> {
   switch (name) {
     // Memories
     case 'memory_save': {
@@ -465,6 +476,9 @@ export function handleTool(mem: RepoMemory, name: string, args: Record<string, u
       const col = collectionFor(mem, args.type as string);
       return col.history(args.entityId as string);
     }
+    case 'mine': {
+      return await mem.mine(args.sessionId as string);
+    }
     case 'stats': {
       return mem.stats();
     }
@@ -497,7 +511,7 @@ function makeError(id: string | number | null, code: number, message: string): J
   return { jsonrpc: '2.0', id, error: { code, message } };
 }
 
-export function handleRequest(mem: RepoMemory, req: JsonRpcRequest): JsonRpcResponse | null {
+export async function handleRequest(mem: RepoMemory, req: JsonRpcRequest): Promise<JsonRpcResponse | null> {
   const id = req.id ?? null;
 
   switch (req.method) {
@@ -524,7 +538,7 @@ export function handleRequest(mem: RepoMemory, req: JsonRpcRequest): JsonRpcResp
       }
 
       try {
-        const result = handleTool(mem, toolName, toolArgs);
+        const result = await handleTool(mem, toolName, toolArgs);
         return makeResult(id, {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         });

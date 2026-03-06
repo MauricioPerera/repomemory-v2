@@ -33,7 +33,7 @@ function send(msg: JsonRpcResponse): void {
 
 let buffer = '';
 
-function processBuffer(): void {
+async function processBuffer(): Promise<void> {
   while (true) {
     const headerEnd = buffer.indexOf('\r\n\r\n');
     if (headerEnd === -1) return;
@@ -55,7 +55,7 @@ function processBuffer(): void {
 
     try {
       const req = JSON.parse(body) as JsonRpcRequest;
-      const res = handleRequest(mem, req);
+      const res = await handleRequest(mem, req);
       if (res) send(res);
     } catch {
       send({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } });

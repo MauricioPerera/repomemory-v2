@@ -62,6 +62,19 @@ export class RepoMemory {
         col.setScoringWeights(config.scoring);
       }
     }
+
+    if (config.autoMine && config.ai) {
+      this.events.on('entity:save', ({ entity }) => {
+        if (entity.type === 'session') {
+          this.mine(entity.id).catch(err => {
+            this.events.emit('session:automine:error', {
+              sessionId: entity.id,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          });
+        }
+      });
+    }
   }
 
   on<K extends EventName>(event: K, handler: EventHandler<K>): void {

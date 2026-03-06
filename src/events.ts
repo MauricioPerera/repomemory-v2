@@ -7,6 +7,7 @@ export interface RepoMemoryEvents {
   'entity:update': { entity: Entity; commit: CommitInfo };
   'entity:delete': { entityId: string; entityType: EntityType; commit: CommitInfo };
   'session:mined': { sessionId: string };
+  'session:automine:error': { sessionId: string; error: string };
   'consolidation:done': { type: string; agentId: string };
 }
 

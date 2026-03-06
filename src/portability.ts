@@ -1,0 +1,167 @@
+import type { Entity, Memory, Skill, Knowledge, Session, Profile } from './types/entities.js';
+import type { StorageEngine } from './storage/engine.js';
+import type { SearchEngine } from './search/search-engine.js';
+import type { AccessTracker } from './storage/access-tracker.js';
+import { RepoMemoryError } from './types/errors.js';
+
+const EXPORT_VERSION = 1;
+
+export interface ExportData {
+  version: number;
+  exportedAt: string;
+  entities: {
+    memories: Memory[];
+    skills: Skill[];
+    knowledge: Knowledge[];
+    sessions: Session[];
+    profiles: Profile[];
+  };
+  accessCounts: Record<string, number>;
+}
+
+export interface ImportOptions {
+  /** When true, skip entities whose ID already exists. When false (default), overwrite existing. */
+  skipExisting?: boolean;
+}
+
+export interface ImportReport {
+  imported: number;
+  skipped: number;
+  overwritten: number;
+  byType: { memories: number; skills: number; knowledge: number; sessions: number; profiles: number };
+}
+
+/**
+ * Export all live entities and access counts from a RepoMemory instance.
+ */
+export function exportData(
+  storage: StorageEngine,
+  accessTracker: AccessTracker,
+): ExportData {
+  const memories: Memory[] = [];
+  const skills: Skill[] = [];
+  const knowledge: Knowledge[] = [];
+  const sessions: Session[] = [];
+  const profiles: Profile[] = [];
+  const accessCounts: Record<string, number> = {};
+
+  // Walk all refs to collect live entities
+  const allRefs = storage.refs.listAll();
+  for (const refPath of allRefs) {
+    const ref = storage.refs.get(refPath);
+    if (!ref) continue;
+    const commit = storage.commits.read(ref.head);
+    if (commit.objectHash === 'TOMBSTONE') continue;
+    const obj = storage.objects.read(commit.objectHash);
+    const entity = obj.data as Entity;
+
+    // Attach current access count
+    const count = accessTracker.get(entity.id);
+    if (count > 0) accessCounts[entity.id] = count;
+
+    switch (entity.type) {
+      case 'memory': memories.push(entity); break;
+      case 'skill': skills.push(entity); break;
+      case 'knowledge': knowledge.push(entity); break;
+      case 'session': sessions.push(entity); break;
+      case 'profile': profiles.push(entity); break;
+    }
+  }
+
+  return {
+    version: EXPORT_VERSION,
+    exportedAt: new Date().toISOString(),
+    entities: { memories, skills, knowledge, sessions, profiles },
+    accessCounts,
+  };
+}
+
+/**
+ * Import entities from an ExportData payload into a RepoMemory instance.
+ * Entities are re-saved preserving their original IDs and timestamps.
+ */
+export function importData(
+  storage: StorageEngine,
+  searchEngine: SearchEngine,
+  accessTracker: AccessTracker,
+  data: ExportData,
+  options: ImportOptions = {},
+): ImportReport {
+  if (!data || typeof data !== 'object' || !data.entities) {
+    throw new RepoMemoryError('INVALID_INPUT', 'Invalid export data: missing entities');
+  }
+  if (data.version !== EXPORT_VERSION) {
+    throw new RepoMemoryError('INVALID_INPUT', `Unsupported export version: ${data.version} (expected ${EXPORT_VERSION})`);
+  }
+
+  const skipExisting = options.skipExisting ?? false;
+  let imported = 0;
+  let skipped = 0;
+  let overwritten = 0;
+  const byType = { memories: 0, skills: 0, knowledge: 0, sessions: 0, profiles: 0 };
+
+  const allEntities: Entity[] = [
+    ...(data.entities.memories ?? []),
+    ...(data.entities.skills ?? []),
+    ...(data.entities.knowledge ?? []),
+    ...(data.entities.sessions ?? []),
+    ...(data.entities.profiles ?? []),
+  ];
+
+  for (const entity of allEntities) {
+    const existing = storage.load(entity.id);
+
+    if (existing) {
+      if (skipExisting) {
+        skipped++;
+        continue;
+      }
+      overwritten++;
+    }
+
+    // Save entity (creates object + commit + updates ref + lookup)
+    storage.save(entity);
+
+    // Index in search engine
+    const scope = buildSearchScope(entity);
+    searchEngine.indexEntity(scope, entity);
+
+    imported++;
+    incrementTypeCount(byType, entity.type);
+  }
+
+  // Restore access counts
+  for (const [entityId, count] of Object.entries(data.accessCounts ?? {})) {
+    for (let i = 0; i < count; i++) {
+      accessTracker.increment(entityId);
+    }
+  }
+
+  searchEngine.flush();
+  accessTracker.flush();
+
+  return { imported, skipped, overwritten, byType };
+}
+
+function buildSearchScope(entity: Entity): string {
+  switch (entity.type) {
+    case 'memory': return `memories:${entity.agentId}:${entity.userId}`;
+    case 'skill': return `skills:${entity.agentId}`;
+    case 'knowledge': return `knowledge:${entity.agentId}`;
+    case 'session': return `sessions:${entity.agentId}:${entity.userId}`;
+    case 'profile': return `profiles:${entity.agentId}:${entity.userId}`;
+  }
+}
+
+function incrementTypeCount(
+  byType: ImportReport['byType'],
+  type: Entity['type'],
+): void {
+  switch (type) {
+    case 'memory': byType.memories++; break;
+    case 'skill': byType.skills++; break;
+    case 'knowledge': byType.knowledge++; break;
+    case 'session': byType.sessions++; break;
+    case 'profile': byType.profiles++; break;
+  }
+}

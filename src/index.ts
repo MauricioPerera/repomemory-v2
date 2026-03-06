@@ -11,6 +11,8 @@ import { RepoMemoryEventBus, type EventName, type EventHandler } from './events.
 import { RecallEngine } from './recall/engine.js';
 import { runCleanup } from './cleanup.js';
 import type { CleanupOptions, CleanupReport } from './cleanup.js';
+import { exportData as runExport, importData as runImport } from './portability.js';
+import type { ExportData, ImportOptions, ImportReport } from './portability.js';
 import type { RepoMemoryConfig } from './types/config.js';
 import type { AiProvider } from './types/ai.js';
 import type { SnapshotInfo, VerifyResult } from './types/results.js';
@@ -155,6 +157,14 @@ export class RepoMemory {
     return runCleanup(this, this.storage, options);
   }
 
+  export(): ExportData {
+    return runExport(this.storage, this.accessTracker);
+  }
+
+  import(data: ExportData, options?: ImportOptions): ImportReport {
+    return runImport(this.storage, this.searchEngine, this.accessTracker, data, options);
+  }
+
   verify(): VerifyResult {
     const errors: string[] = [];
     const allObjects = this.storage.objects.listAll();
@@ -214,4 +224,5 @@ export { RepoMemoryError } from './types/errors.js';
 export type { ErrorCode } from './types/errors.js';
 export type { RepoMemoryEvents, EventName, EventHandler } from './events.js';
 export type { CleanupOptions, CleanupReport } from './cleanup.js';
+export type { ExportData, ImportOptions, ImportReport } from './portability.js';
 export type { ScoringWeights } from './search/scoring.js';

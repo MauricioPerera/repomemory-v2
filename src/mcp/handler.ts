@@ -329,6 +329,23 @@ export const tools: ToolDef[] = [
     description: 'Verify storage integrity: check all object hashes and commit references.',
     inputSchema: { type: 'object', properties: {} },
   },
+  {
+    name: 'export',
+    description: 'Export all entities and access counts as a portable JSON object.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'import',
+    description: 'Import entities from an export payload. Preserves original IDs.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        data: { type: 'object', description: 'Export data object (from the export tool)' },
+        skipExisting: { type: 'boolean', description: 'Skip entities that already exist (default: false)' },
+      },
+      required: ['data'],
+    },
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -484,6 +501,14 @@ export async function handleTool(mem: RepoMemory, name: string, args: Record<str
     }
     case 'verify': {
       return mem.verify();
+    }
+    case 'export': {
+      return mem.export();
+    }
+    case 'import': {
+      return mem.import(args.data as Parameters<typeof mem.import>[0], {
+        skipExisting: args.skipExisting as boolean,
+      });
     }
     default:
       throw new Error(`Unknown tool: ${name}`);

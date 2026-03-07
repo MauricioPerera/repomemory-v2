@@ -9,10 +9,12 @@ import type { Entity, EntityType } from '../types/entities.js';
 import type { SearchResult, CommitInfo, ListOptions, ListResult } from '../types/results.js';
 import { RepoMemoryError } from '../types/errors.js';
 import type { RepoMemoryEventBus } from '../events.js';
+import type { MiddlewareChain } from '../middleware.js';
 
 export abstract class BaseCollection<T extends Entity> {
   protected eventBus?: RepoMemoryEventBus;
   protected scoringWeights?: ScoringWeights;
+  protected middlewareChain?: MiddlewareChain;
 
   constructor(
     protected readonly storage: StorageEngine,
@@ -29,17 +31,28 @@ export abstract class BaseCollection<T extends Entity> {
     this.eventBus = eventBus;
   }
 
+  setMiddleware(chain: MiddlewareChain): void {
+    this.middlewareChain = chain;
+  }
+
   protected abstract buildEntity(id: string, agentId: string, userId: string | undefined, input: Record<string, unknown>): T;
   protected abstract searchScope(agentId: string, userId?: string): string;
 
   save(agentId: string, userId: string | undefined, input: Record<string, unknown>): [T, CommitInfo] {
     const now = new Date().toISOString();
     const id = this.generateId();
-    const entity = this.buildEntity(id, agentId, userId, {
+    let entity = this.buildEntity(id, agentId, userId, {
       ...input,
       createdAt: now,
       updatedAt: now,
     });
+    if (this.middlewareChain) {
+      const result = this.middlewareChain.runBeforeSave(entity);
+      if (result === null) {
+        throw new RepoMemoryError('MIDDLEWARE_CANCELLED', `Save cancelled by middleware for ${this.entityType}`);
+      }
+      entity = result as T;
+    }
     const commit = this.storage.save(entity);
     this.searchEngine.indexEntity(this.searchScope(agentId, userId), entity);
     this.searchEngine.flush();
@@ -52,11 +65,16 @@ export abstract class BaseCollection<T extends Entity> {
     const results: Array<[T, CommitInfo]> = [];
     for (const { agentId, userId, input } of items) {
       const id = this.generateId();
-      const entity = this.buildEntity(id, agentId, userId, {
+      let entity = this.buildEntity(id, agentId, userId, {
         ...input,
         createdAt: now,
         updatedAt: now,
       });
+      if (this.middlewareChain) {
+        const result = this.middlewareChain.runBeforeSave(entity);
+        if (result === null) continue; // skip this item silently
+        entity = result as T;
+      }
       const commit = this.storage.save(entity);
       this.searchEngine.indexEntity(this.searchScope(agentId, userId), entity);
       results.push([entity, commit]);
@@ -71,7 +89,15 @@ export abstract class BaseCollection<T extends Entity> {
     if (!existing) {
       throw new RepoMemoryError('NOT_FOUND', `Entity not found: ${entityId}`);
     }
-    const updated = { ...existing, ...updates, updatedAt: new Date().toISOString() } as T;
+    let finalUpdates = updates as Record<string, unknown>;
+    if (this.middlewareChain) {
+      const result = this.middlewareChain.runBeforeUpdate(existing, finalUpdates);
+      if (result === null) {
+        throw new RepoMemoryError('MIDDLEWARE_CANCELLED', `Update cancelled by middleware for ${entityId}`);
+      }
+      finalUpdates = result;
+    }
+    const updated = { ...existing, ...finalUpdates, updatedAt: new Date().toISOString() } as T;
     const commit = this.storage.save(updated);
     const agentId = (updated as unknown as { agentId: string }).agentId;
     const userId = 'userId' in updated ? (updated as unknown as { userId: string }).userId : undefined;
@@ -95,6 +121,9 @@ export abstract class BaseCollection<T extends Entity> {
     if (!entity) {
       throw new RepoMemoryError('NOT_FOUND', `Entity not found: ${entityId}`);
     }
+    if (this.middlewareChain && !this.middlewareChain.runBeforeDelete(entityId, this.entityType)) {
+      throw new RepoMemoryError('MIDDLEWARE_CANCELLED', `Delete cancelled by middleware for ${entityId}`);
+    }
     const agentId = (entity as unknown as { agentId: string }).agentId;
     const userId = 'userId' in entity ? (entity as unknown as { userId: string }).userId : undefined;
     this.searchEngine.removeEntity(this.searchScope(agentId, userId), entityId);
@@ -113,6 +142,7 @@ export abstract class BaseCollection<T extends Entity> {
     for (const entityId of entityIds) {
       const entity = this.get(entityId);
       if (!entity) continue;
+      if (this.middlewareChain && !this.middlewareChain.runBeforeDelete(entityId, this.entityType)) continue;
       const agentId = (entity as unknown as { agentId: string }).agentId;
       const userId = 'userId' in entity ? (entity as unknown as { userId: string }).userId : undefined;
       this.searchEngine.removeEntity(this.searchScope(agentId, userId), entityId);

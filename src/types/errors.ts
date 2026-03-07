@@ -7,7 +7,8 @@ export type ErrorCode =
   | 'AI_NOT_CONFIGURED'
   | 'AI_ERROR'
   | 'SNAPSHOT_ERROR'
-  | 'PARSE_ERROR';
+  | 'PARSE_ERROR'
+  | 'MIDDLEWARE_CANCELLED';
 
 export class RepoMemoryError extends Error {
   constructor(

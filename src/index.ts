@@ -19,6 +19,8 @@ import type { SnapshotInfo, VerifyResult } from './types/results.js';
 import type { MiningResult, ConsolidationReport, SkillConsolidationReport, KnowledgeConsolidationReport } from './types/results.js';
 import type { RecallContext, RecallOptions } from './types/results.js';
 import { RepoMemoryError } from './types/errors.js';
+import { MiddlewareChain } from './middleware.js';
+import type { Middleware } from './middleware.js';
 
 export class RepoMemory {
   readonly memories: MemoryCollection;
@@ -34,6 +36,7 @@ export class RepoMemory {
   private readonly snapshots: SnapshotManager;
   private readonly accessTracker: AccessTracker;
   private readonly ai?: AiProvider;
+  private readonly middlewareChain: MiddlewareChain;
 
   constructor(config: RepoMemoryConfig) {
     this.config = config;
@@ -43,6 +46,7 @@ export class RepoMemory {
     this.accessTracker = new AccessTracker(config.dir);
     this.ai = config.ai;
     this.events = new RepoMemoryEventBus();
+    this.middlewareChain = new MiddlewareChain();
 
     this.storage.init();
     this.searchEngine.init();
@@ -54,10 +58,12 @@ export class RepoMemory {
     this.sessions = new SessionCollection(this.storage, this.searchEngine);
     this.profiles = new ProfileCollection(this.storage, this.searchEngine);
 
-    // Wire event bus and scoring weights to all collections
+    // Wire event bus, middleware, and scoring weights to all collections
+    const allCollections = [this.memories, this.skills, this.knowledge, this.sessions, this.profiles];
     const scorableCollections = [this.memories, this.skills, this.knowledge];
-    for (const col of [this.memories, this.skills, this.knowledge, this.sessions, this.profiles]) {
+    for (const col of allCollections) {
       col.setEventBus(this.events);
+      col.setMiddleware(this.middlewareChain);
     }
     if (config.scoring) {
       for (const col of scorableCollections) {
@@ -85,6 +91,10 @@ export class RepoMemory {
 
   off<K extends EventName>(event: K, handler: EventHandler<K>): void {
     this.events.off(event, handler);
+  }
+
+  use(middleware: Middleware): void {
+    this.middlewareChain.use(middleware);
   }
 
   flush(): void {
@@ -225,4 +235,5 @@ export type { ErrorCode } from './types/errors.js';
 export type { RepoMemoryEvents, EventName, EventHandler } from './events.js';
 export type { CleanupOptions, CleanupReport } from './cleanup.js';
 export type { ExportData, ImportOptions, ImportReport } from './portability.js';
+export type { Middleware } from './middleware.js';
 export type { ScoringWeights } from './search/scoring.js';

@@ -27,4 +27,10 @@ export default defineConfig([
     banner: { js: '#!/usr/bin/env node' },
     sourcemap: true,
   },
+  {
+    entry: ['src/http.ts'],
+    format: ['esm'],
+    banner: { js: '#!/usr/bin/env node' },
+    sourcemap: true,
+  },
 ]);

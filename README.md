@@ -26,10 +26,13 @@ RepoMemory provides persistent, versioned memory for AI agents. Every change is 
 - **AI validation** — strict schema validators on AI responses (non-empty content, typed tags, valid IDs) with automatic retry on malformed output
 - **Optional AI** — mining and consolidation (memories, skills, knowledge) via OpenAI, Anthropic, or Ollama
 - **Zero runtime dependencies** — only Node.js built-ins (`node:fs`, `node:path`, `node:crypto`, `fetch`)
+- **Middleware pipeline** — `use()` to register `beforeSave`/`beforeUpdate`/`beforeDelete` hooks for validation, transformation, or vetoing operations
+- **Export/Import** — portable JSON serialization of all entities + access counts for backup, migration, or cloning
 - **MCP server** — expose all operations via Model Context Protocol (JSON-RPC 2.0 over stdio) for LLM tool-use integrations
+- **HTTP API** — lightweight REST server (`node:http`) for language-agnostic integrations (CORS enabled)
 - **Auto-mining** — automatically extract memories/skills/profile when sessions are saved (`autoMine` config)
 - **Compact prompts** — configurable prompt strategy optimized for small reasoning models (<3B params)
-- **Library + CLI + MCP** — import as a TypeScript library, use from the command line, or connect via MCP
+- **Library + CLI + MCP + HTTP** — import as a TypeScript library, use from the command line, or connect via MCP/HTTP
 - **Cross-platform** — works on Windows, macOS, and Linux
 
 ## Install
@@ -331,6 +334,50 @@ const preview = mem.cleanup({ maxAgeDays: 90, dryRun: true });
 mem.cleanup({ maxAgeDays: 90, maxAuditLines: 1000 });
 ```
 
+#### Middleware
+
+Register hooks to intercept save/update/delete operations for validation, transformation, or vetoing:
+
+```ts
+mem.use({
+  // Transform entity before save — return null to cancel
+  beforeSave(entity) {
+    if ('tags' in entity) {
+      return { ...entity, tags: entity.tags.map(t => t.toLowerCase()) };
+    }
+    return entity;
+  },
+  // Transform updates before update — return null to cancel
+  beforeUpdate(entity, updates) {
+    if (entity.tags?.includes('locked')) return null; // prevent updating locked entities
+    return updates;
+  },
+  // Return false to prevent deletion
+  beforeDelete(entityId, entityType) {
+    return entityType !== 'profile'; // protect profiles
+  },
+});
+```
+
+Multiple middleware run in registration order. `saveMany` skips cancelled items silently; `deleteMany` skips vetoed items.
+
+#### Export / Import
+
+Portable JSON serialization for backup, migration, or cloning:
+
+```ts
+// Export all live entities + access counts
+const data = mem.export();
+// { version: 1, exportedAt: '...', entities: { memories, skills, ... }, accessCounts: {...} }
+
+// Import into another instance (preserves original IDs)
+const report = mem.import(data);
+// { imported: 42, skipped: 0, overwritten: 0, byType: { memories: 10, skills: 5, ... } }
+
+// Merge mode — skip entities that already exist
+mem.import(data, { skipExisting: true });
+```
+
 #### Snapshots
 
 Snapshots create a full point-in-time copy (objects, commits, refs, indices):
@@ -458,6 +505,8 @@ repomemory mine <sessionId> [--provider ollama|openai|anthropic] [--model <name>
 repomemory consolidate --agent <id> [--user <id>] [--type memories|skills|knowledge] [--provider ollama] [--model <name>]
 repomemory recall <query> --agent <id> --user <id> [--max-items 20] [--max-chars 8000]
 repomemory cleanup [--max-age 90] [--max-audit 10000] [--dry-run]
+repomemory export <file.json>
+repomemory import <file.json> [--skip-existing]
 repomemory stats
 repomemory verify
 ```
@@ -489,7 +538,7 @@ Add to your MCP client configuration (e.g., Claude Desktop, Cursor, etc.):
 }
 ```
 
-### Available Tools (21)
+### Available Tools (23)
 
 | Tool | Description |
 |------|-------------|
@@ -514,6 +563,45 @@ Add to your MCP client configuration (e.g., Claude Desktop, Cursor, etc.):
 | `mine` | Extract memories/skills/profile from a session (requires AI provider) |
 | `stats` | Get storage statistics |
 | `verify` | Run integrity check |
+| `export` | Export all entities as portable JSON |
+| `import` | Import entities from export payload |
+
+## HTTP API
+
+Lightweight REST server for language-agnostic integrations. Uses the same tool set as MCP.
+
+### Running the HTTP server
+
+```bash
+repomemory-http --dir .repomemory --port 3210
+```
+
+### Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/health` | Health check (`{ status: "ok" }`) |
+| `GET` | `/tools` | List all available tools |
+| `POST` | `/tool/<name>` | Call a tool with JSON body as arguments |
+
+### Example
+
+```bash
+# Save a memory
+curl -X POST http://localhost:3210/tool/memory_save \
+  -H 'Content-Type: application/json' \
+  -d '{"agentId":"a1","userId":"u1","content":"Prefers dark mode","tags":["ui"]}'
+
+# Search
+curl -X POST http://localhost:3210/tool/memory_search \
+  -H 'Content-Type: application/json' \
+  -d '{"agentId":"a1","userId":"u1","query":"dark mode","limit":5}'
+
+# Stats
+curl -X POST http://localhost:3210/tool/stats -d '{}'
+```
+
+CORS is enabled by default (`Access-Control-Allow-Origin: *`).
 
 ## Architecture
 
@@ -606,9 +694,19 @@ RepoMemory (facade)
 |   +-- OpenAiProvider     OpenAI API (default: gpt-4o-mini)
 |   +-- AnthropicProvider  Anthropic Messages API (default: claude-sonnet-4-20250514)
 |
++-- Middleware
+|   +-- MiddlewareChain    Ordered pipeline: beforeSave, beforeUpdate, beforeDelete hooks
+|
++-- Portability
+|   +-- exportData         Collect all live entities + access counts as portable JSON
+|   +-- importData         Restore entities preserving IDs, re-index, restore access counts
+|
 +-- MCP Server (bin: repomemory-mcp)
-    +-- handler.ts         Protocol logic: 21 tools, JSON-RPC dispatch (testable independently)
-    +-- mcp.ts             Stdio transport: Content-Length framing, buffer parsing
+|   +-- handler.ts         Protocol logic: 23 tools, JSON-RPC dispatch (testable independently)
+|   +-- mcp.ts             Stdio transport: Content-Length framing, buffer parsing
+|
++-- HTTP Server (bin: repomemory-http)
+    +-- http.ts            REST API over node:http, reuses MCP handler, CORS enabled
 ```
 
 ### Search Pipeline
@@ -662,20 +760,26 @@ The TF-IDF index is cached to disk and updated incrementally — no full rebuild
 | Typed event bus with try-catch | Type-safe hooks without coupling consumers to internals; handler errors never crash core ops |
 | Strict schema validators on AI output | Catch malformed LLM responses before they corrupt storage; validates content, tags, categories |
 | mkdir-based file locking on save/delete | Atomic on all platforms; stale lock detection via mtime; wraps every write operation |
+| Middleware chain with cancel semantics | beforeSave returns null to cancel; saveMany skips silently, single save throws — consistent UX |
+| Export preserves entity IDs | Import into another instance maintains references (e.g., sourceSession links) |
+| HTTP reuses MCP handler | Single source of truth for tool dispatch; HTTP is just a transport wrapper |
 
 ## Changelog
 
 ### v2.5.0
 
-**MCP Server, Auto-Mining & Compact Prompts**
+**MCP Server, HTTP API, Export/Import, Middleware, Auto-Mining & Compact Prompts**
 
-- **MCP server** (`repomemory-mcp`): Full Model Context Protocol server over stdio with Content-Length framed JSON-RPC 2.0. Exposes 21 tools covering all CRUD operations, search, recall, mining, stats, and integrity verification. Handler logic is separated from transport for testability.
-- **Auto-mining** (`autoMine` config): When enabled, sessions are automatically mined on save via the event bus. Fire-and-forget — errors emit `session:automine:error` instead of crashing. Requires an `ai` provider.
+- **MCP server** (`repomemory-mcp`): Full Model Context Protocol server over stdio with Content-Length framed JSON-RPC 2.0. Exposes 23 tools covering all CRUD operations, search, recall, mining, export/import, stats, and integrity verification. Handler logic is separated from transport for testability.
+- **HTTP API** (`repomemory-http`): Lightweight REST server using `node:http`. Reuses the MCP handler for all 23 tools. Endpoints: `GET /health`, `GET /tools`, `POST /tool/<name>`. CORS enabled.
+- **Export/Import** (`mem.export()`, `mem.import()`): Portable JSON serialization of all entities + access counts. Preserves original IDs on import. Options: `skipExisting` for merge mode. CLI: `repomemory export <file>`, `repomemory import <file> [--skip-existing]`.
+- **Middleware pipeline** (`mem.use()`): Register `beforeSave`/`beforeUpdate`/`beforeDelete` hooks for validation, transformation, or vetoing. Chain runs in order, short-circuits on cancel. New error code: `MIDDLEWARE_CANCELLED`.
+- **Auto-mining** (`autoMine` config): Sessions automatically mined on save via event bus. Fire-and-forget — errors emit `session:automine:error` instead of crashing. Requires `ai` provider.
 - **Configurable compact prompts** (`compactPrompts` config): Explicit control over prompt strategy. Compact prompts use shorter system messages and one-shot examples optimized for small reasoning models (<3B params). Auto-detected by default (true for Ollama, false for OpenAI/Anthropic).
-- **New event**: `session:automine:error` — emitted when auto-mining fails, with `sessionId` and `error` message.
+- **CLI commands**: Added `export`, `import`, `recall`, `cleanup` commands (previously library-only).
 
 **Tests**
-- Added 31 new tests: MCP handler (21 tools + protocol tests), auto-mining (7 scenarios), compact prompts. Total: 237 tests across 22 files.
+- Added 78 new tests: MCP handler, auto-mining, portability (13), middleware (15), CLI commands (8), HTTP API (11). Total: ~284 tests across 27 files.
 
 ### v2.4.0
 
@@ -766,7 +870,7 @@ npm run build        # Build ESM + .d.ts + sourcemaps (tsup)
 
 ### Running Tests
 
-Tests use temporary directories and clean up after themselves. 237 tests across 22 files:
+Tests use temporary directories and clean up after themselves. ~284 tests across 27 files:
 
 - **Unit tests**: tokenizer, TF-IDF, scoring, JSON serialization, CLI parser
 - **Storage tests**: object store, commit store, ref store, engine, snapshots
@@ -775,7 +879,7 @@ Tests use temporary directories and clean up after themselves. 237 tests across 
 - **v2.2 feature tests**: recall engine, events, structured sessions, cleanup, file locking, dedup threshold, AI validation, access tracking, NaN guards, ESM compatibility
 - **v2.3 search tests**: Porter stemmer, query expansion, configurable scoring weights, access boost cap, score-based recall budget, index diagnostics
 - **v2.4 gap tests**: saveOrUpdate for skills/knowledge, pagination, count, deleteMany, event emission on bulk ops
-- **v2.5 feature tests**: MCP handler (21 tools, protocol, errors), auto-mining (7 scenarios with mock providers), compact prompts
+- **v2.5 feature tests**: MCP handler, auto-mining, portability (13), middleware (15), CLI commands (8), HTTP API (11)
 - **Benchmarks**: save/saveMany throughput, search latency
 
 ```bash

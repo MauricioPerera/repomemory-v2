@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-npm run build        # Build ESM + .d.ts + sourcemaps (tsup, 3 entry points)
+npm run build        # Build ESM + .d.ts + sourcemaps (tsup, 5 entry points)
 npm run typecheck    # TypeScript strict check (tsc --noEmit)
 npm test             # Run all tests (vitest)
 npx vitest run tests/search          # Run tests in a directory
@@ -17,11 +17,13 @@ npx vitest --watch                   # Watch mode
 
 RepoMemory is a Git-inspired persistent memory system for AI agents. Zero runtime dependencies — only `node:fs`, `node:path`, `node:crypto`, and `fetch`. ESM-only (`"type": "module"`).
 
-### Three build entry points (tsup)
+### Five build entry points (tsup)
 
 1. `src/index.ts` → `dist/index.js` — Core library
 2. `src/ai/index.ts` → `dist/ai/index.js` — AI providers (sub-export `repomemory/ai`)
-3. `src/cli.ts` → `dist/cli.js` — CLI binary
+3. `src/cli.ts` → `dist/cli.js` — CLI binary (`repomemory`)
+4. `src/mcp.ts` → `dist/mcp.js` — MCP server binary (`repomemory-mcp`)
+5. `src/http.ts` → `dist/http.js` — HTTP API binary (`repomemory-http`)
 
 ### Core data flow: Git-like storage
 
@@ -39,9 +41,12 @@ Deletes create a **tombstone commit** (`objectHash: "TOMBSTONE"`). The ref still
 
 - **`RepoMemory`** (`src/index.ts`) — Facade. Wires everything together. AI pipelines are `await import()`-ed lazily.
 - **`StorageEngine`** (`src/storage/engine.ts`) — Orchestrates ObjectStore, CommitStore, RefStore, LookupIndex, AuditLog, LockGuard. All writes go through `lock.withLock()`.
-- **`BaseCollection`** (`src/collections/base.ts`) — Abstract base for all 5 entity types. Provides save/get/update/delete/list/search/pagination. Subclasses only implement `buildEntity()` and `searchScope()`.
+- **`BaseCollection`** (`src/collections/base.ts`) — Abstract base for all 5 entity types. Provides save/get/update/delete/list/search/pagination. Runs middleware chain on save/update/delete.
 - **`SearchEngine`** (`src/search/search-engine.ts`) — Manages scoped TF-IDF indices. Each `type:agentId:userId` combination has its own index, serialized to disk.
 - **`RecallEngine`** (`src/recall/engine.ts`) — Score-based multi-collection query. Pools all results and takes top N by composite score.
+- **`MiddlewareChain`** (`src/middleware.ts`) — Ordered beforeSave/beforeUpdate/beforeDelete hooks. Short-circuits on null/false.
+- **`MCP handler`** (`src/mcp/handler.ts`) — 23 tools, JSON-RPC dispatch. Shared by both MCP and HTTP servers.
+- **`Portability`** (`src/portability.ts`) — Export/import of all entities + access counts as portable JSON.
 
 ### Scoping model
 
@@ -60,3 +65,5 @@ Query → synonym expansion (`query-expander.ts`) → tokenize + stopwords → P
 - TypeScript strict mode with `noUnusedLocals` and `noUnusedParameters`
 - Tests use temp directories and clean up after themselves
 - Vitest globals are enabled (`describe`, `it`, `expect` without imports)
+- No vectors/embeddings by design — TF-IDF + AI mining replaces vector search
+- The project is private and model-agnostic — any LLM that can read/write should be able to interact with it

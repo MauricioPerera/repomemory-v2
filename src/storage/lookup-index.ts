@@ -14,6 +14,10 @@ export class LookupIndex {
 
   init(): void {
     mkdirSync(this.dir, { recursive: true });
+    // Eagerly load all scopes into globalIndex for O(1) findById
+    for (const scope of this.listScopeFiles()) {
+      this.getScope(scope);
+    }
   }
 
   set(scope: string, entityId: string, refPath: string): void {
@@ -55,20 +59,7 @@ export class LookupIndex {
   }
 
   findById(entityId: string): string | undefined {
-    const cached = this.globalIndex.get(entityId);
-    if (cached) return cached;
-    // Fallback: search scopes not yet loaded
-    const files = this.listScopeFiles();
-    for (const scope of files) {
-      if (this.indices.has(scope)) continue;
-      const map = this.getScope(scope);
-      const ref = map.get(entityId);
-      if (ref) {
-        this.globalIndex.set(entityId, ref);
-        return ref;
-      }
-    }
-    return undefined;
+    return this.globalIndex.get(entityId);
   }
 
   private getScope(scope: string): Map<string, string> {

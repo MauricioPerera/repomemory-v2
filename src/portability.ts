@@ -1,4 +1,5 @@
 import type { Entity, Memory, Skill, Knowledge, Session, Profile } from './types/entities.js';
+import { scopeFromEntity } from './scoping.js';
 import type { StorageEngine } from './storage/engine.js';
 import type { SearchEngine } from './search/search-engine.js';
 import type { AccessTracker } from './storage/access-tracker.js';
@@ -123,8 +124,7 @@ export function importData(
     storage.save(entity);
 
     // Index in search engine
-    const scope = buildSearchScope(entity);
-    searchEngine.indexEntity(scope, entity);
+    searchEngine.indexEntity(scopeFromEntity(entity), entity);
 
     imported++;
     incrementTypeCount(byType, entity.type);
@@ -141,16 +141,6 @@ export function importData(
   accessTracker.flush();
 
   return { imported, skipped, overwritten, byType };
-}
-
-function buildSearchScope(entity: Entity): string {
-  switch (entity.type) {
-    case 'memory': return `memories:${entity.agentId}:${entity.userId}`;
-    case 'skill': return `skills:${entity.agentId}`;
-    case 'knowledge': return `knowledge:${entity.agentId}`;
-    case 'session': return `sessions:${entity.agentId}:${entity.userId}`;
-    case 'profile': return `profiles:${entity.agentId}:${entity.userId}`;
-  }
 }
 
 function incrementTypeCount(

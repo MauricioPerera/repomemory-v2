@@ -109,7 +109,8 @@ export class TfIdfIndex {
         totalTerms: d.totalTerms,
       });
     }
-    index.dirty = true;
+    // Pre-compute IDF from deserialized data instead of marking dirty
+    index.recomputeIdf();
     return index;
   }
 }

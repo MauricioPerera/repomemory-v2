@@ -1,5 +1,6 @@
 import { RepoMemory } from '../../index.js';
 import { print, printJson, printError } from '../output.js';
+import { createAiProvider } from '../provider-factory.js';
 import type { ParsedArgs } from '../parser.js';
 
 export async function cmdConsolidate(args: ParsedArgs): Promise<void> {
@@ -13,27 +14,8 @@ export async function cmdConsolidate(args: ParsedArgs): Promise<void> {
   if (!agentId) { printError('--agent required'); return; }
   if (type === 'memories' && !userId) { printError('--user required for memory consolidation'); return; }
 
-  let ai;
-  switch (provider) {
-    case 'ollama': {
-      const { OllamaProvider } = await import('../../ai/providers/ollama.js');
-      ai = new OllamaProvider({ model });
-      break;
-    }
-    case 'openai': {
-      const { OpenAiProvider } = await import('../../ai/providers/openai.js');
-      ai = new OpenAiProvider({ model });
-      break;
-    }
-    case 'anthropic': {
-      const { AnthropicProvider } = await import('../../ai/providers/anthropic.js');
-      ai = new AnthropicProvider({ model });
-      break;
-    }
-    default:
-      printError(`Unknown provider: ${provider}`);
-      return;
-  }
+  const ai = await createAiProvider(provider, model);
+  if (!ai) { printError(`Unknown provider: ${provider}`); return; }
 
   const mem = new RepoMemory({ dir, ai });
 

@@ -3,6 +3,7 @@ import type { RepoMemory } from '../index.js';
 import type { ConsolidationReport, SkillConsolidationReport, KnowledgeConsolidationReport } from '../types/results.js';
 import type { Entity, Memory, Skill, Knowledge } from '../types/entities.js';
 import { AiService, type ConsolidationPlan } from '../ai/service.js';
+import { RepoMemoryError } from '../types/errors.js';
 
 const CHUNK_SIZE = 20;
 
@@ -58,13 +59,17 @@ abstract class BaseConsolidationPipeline<T extends Entity> {
         merge.merged,
       );
       for (const srcId of merge.sourceIds) {
-        try { this.deleteItem(srcId); } catch { /* already deleted */ }
+        try { this.deleteItem(srcId); } catch (err) {
+          if (!(err instanceof RepoMemoryError && err.code === 'NOT_FOUND')) throw err;
+        }
       }
       merged += merge.sourceIds.length;
     }
 
     for (const removeId of plan.remove) {
-      try { this.deleteItem(removeId); removed++; } catch { /* already deleted */ }
+      try { this.deleteItem(removeId); removed++; } catch (err) {
+        if (!(err instanceof RepoMemoryError && err.code === 'NOT_FOUND')) throw err;
+      }
     }
 
     return { merged, removed, kept: plan.keep.length };

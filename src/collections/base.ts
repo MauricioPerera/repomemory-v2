@@ -11,6 +11,16 @@ import { RepoMemoryError } from '../types/errors.js';
 import type { RepoMemoryEventBus } from '../events.js';
 import type { MiddlewareChain } from '../middleware.js';
 
+/** Extract agentId from any entity without double-casting */
+function entityAgentId(entity: Entity): string {
+  return (entity as { agentId: string }).agentId;
+}
+
+/** Extract userId from entity if present */
+function entityUserId(entity: Entity): string | undefined {
+  return 'userId' in entity ? (entity as { userId: string }).userId : undefined;
+}
+
 export abstract class BaseCollection<T extends Entity> {
   protected eventBus?: RepoMemoryEventBus;
   protected scoringWeights?: ScoringWeights;
@@ -55,7 +65,6 @@ export abstract class BaseCollection<T extends Entity> {
     }
     const commit = this.storage.save(entity);
     this.searchEngine.indexEntity(this.searchScope(agentId, userId), entity);
-    this.searchEngine.flush();
     if (this.eventBus) this.eventBus.emit('entity:save', { entity, commit });
     return [entity, commit];
   }
@@ -99,10 +108,9 @@ export abstract class BaseCollection<T extends Entity> {
     }
     const updated = { ...existing, ...finalUpdates, updatedAt: new Date().toISOString() } as T;
     const commit = this.storage.save(updated);
-    const agentId = (updated as unknown as { agentId: string }).agentId;
-    const userId = 'userId' in updated ? (updated as unknown as { userId: string }).userId : undefined;
+    const agentId = entityAgentId(updated);
+    const userId = entityUserId(updated);
     this.searchEngine.indexEntity(this.searchScope(agentId, userId), updated);
-    this.searchEngine.flush();
     if (this.eventBus) this.eventBus.emit('entity:update', { entity: updated, commit });
     return [updated, commit];
   }
@@ -124,13 +132,11 @@ export abstract class BaseCollection<T extends Entity> {
     if (this.middlewareChain && !this.middlewareChain.runBeforeDelete(entityId, this.entityType)) {
       throw new RepoMemoryError('MIDDLEWARE_CANCELLED', `Delete cancelled by middleware for ${entityId}`);
     }
-    const agentId = (entity as unknown as { agentId: string }).agentId;
-    const userId = 'userId' in entity ? (entity as unknown as { userId: string }).userId : undefined;
+    const agentId = entityAgentId(entity);
+    const userId = entityUserId(entity);
     this.searchEngine.removeEntity(this.searchScope(agentId, userId), entityId);
-    this.searchEngine.flush();
     if (this.accessTracker) {
       this.accessTracker.remove(entityId);
-      this.accessTracker.flush();
     }
     const commit = this.storage.delete(entity);
     if (this.eventBus) this.eventBus.emit('entity:delete', { entityId, entityType: this.entityType, commit });
@@ -143,8 +149,8 @@ export abstract class BaseCollection<T extends Entity> {
       const entity = this.get(entityId);
       if (!entity) continue;
       if (this.middlewareChain && !this.middlewareChain.runBeforeDelete(entityId, this.entityType)) continue;
-      const agentId = (entity as unknown as { agentId: string }).agentId;
-      const userId = 'userId' in entity ? (entity as unknown as { userId: string }).userId : undefined;
+      const agentId = entityAgentId(entity);
+      const userId = entityUserId(entity);
       this.searchEngine.removeEntity(this.searchScope(agentId, userId), entityId);
       if (this.accessTracker) this.accessTracker.remove(entityId);
       const commit = this.storage.delete(entity);
@@ -188,6 +194,7 @@ export abstract class BaseCollection<T extends Entity> {
   }
 
   find(agentId: string, userId: string | undefined, query: string, limit = 10): SearchResult<T>[] {
+    this.searchEngine.flush(); // ensure pending index updates are applied before searching
     const scope = this.searchScope(agentId, userId);
     const expanded = expandQuery(query);
     const ranked = this.searchEngine.rank(scope, expanded, limit * 3);
@@ -218,6 +225,7 @@ export abstract class BaseCollection<T extends Entity> {
   }
 
   findMultiScope(scopes: string[], query: string, limit = 10): SearchResult<T>[] {
+    this.searchEngine.flush();
     const expanded = expandQuery(query);
     const ranked = this.searchEngine.rankMultiScope(scopes, expanded, limit * 3);
     const queryTags = expanded.toLowerCase().split(/\s+/).filter(t => t.length > 1);

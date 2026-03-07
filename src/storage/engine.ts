@@ -9,6 +9,7 @@ import { LockGuard } from './lockfile.js';
 import type { Entity, EntityType } from '../types/entities.js';
 import type { CommitInfo } from '../types/results.js';
 import { RepoMemoryError } from '../types/errors.js';
+import { scopeFromEntity, scopeFromParts, refBaseFromEntity } from '../scoping.js';
 
 const VERSION = '2';
 
@@ -195,37 +196,14 @@ export class StorageEngine {
   }
 
   private refPath(entity: Entity): string {
-    const base = this.refBase(entity);
-    return `${base}/${entity.id}.ref`;
-  }
-
-  private refBase(entity: Entity): string {
-    switch (entity.type) {
-      case 'memory': return `memories/${entity.agentId}/${entity.userId}`;
-      case 'skill': return `skills/${entity.agentId}`;
-      case 'knowledge': return `knowledge/${entity.agentId}`;
-      case 'session': return `sessions/${entity.agentId}/${entity.userId}`;
-      case 'profile': return `profiles/${entity.agentId}/${entity.userId}`;
-    }
+    return `${refBaseFromEntity(entity)}/${entity.id}.ref`;
   }
 
   private lookupScope(entity: Entity): string {
-    switch (entity.type) {
-      case 'memory': return `memories:${entity.agentId}:${entity.userId}`;
-      case 'skill': return `skills:${entity.agentId}`;
-      case 'knowledge': return `knowledge:${entity.agentId}`;
-      case 'session': return `sessions:${entity.agentId}:${entity.userId}`;
-      case 'profile': return `profiles:${entity.agentId}:${entity.userId}`;
-    }
+    return scopeFromEntity(entity);
   }
 
   private buildScope(type: EntityType, agentId: string, userId?: string): string {
-    switch (type) {
-      case 'memory': return `memories:${agentId}:${userId ?? ''}`;
-      case 'skill': return `skills:${agentId}`;
-      case 'knowledge': return `knowledge:${agentId}`;
-      case 'session': return `sessions:${agentId}:${userId ?? ''}`;
-      case 'profile': return `profiles:${agentId}:${userId ?? ''}`;
-    }
+    return scopeFromParts(type, agentId, userId);
   }
 }

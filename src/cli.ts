@@ -10,6 +10,10 @@ import { cmdMine } from './cli/commands/mine.js';
 import { cmdConsolidate } from './cli/commands/consolidate.js';
 import { cmdStats } from './cli/commands/stats.js';
 import { cmdVerify } from './cli/commands/verify.js';
+import { cmdExport } from './cli/commands/export.js';
+import { cmdImport } from './cli/commands/import.js';
+import { cmdRecall } from './cli/commands/recall.js';
+import { cmdCleanup } from './cli/commands/cleanup.js';
 import { print, printError } from './cli/output.js';
 
 const HELP = `repomemory v2 — Git-inspired agentic memory
@@ -24,6 +28,10 @@ Commands:
   snapshot create|list|restore <id>                  Manage snapshots
   mine <sessionId> [--provider ollama] [--model ..]  Mine a session (AI)
   consolidate --agent <id> --user <id>               Consolidate memories (AI)
+  recall <query> --agent <id> --user <id>            Recall context for an agent
+  cleanup [--max-age 90] [--dry-run]                 Remove stale entities
+  export <file.json>                                 Export all entities to file
+  import <file.json> [--skip-existing]               Import entities from file
   stats                                              Show storage stats
   verify                                             Verify storage integrity`;
 
@@ -40,6 +48,10 @@ async function main(): Promise<void> {
     case 'snapshot': cmdSnapshot(args); break;
     case 'mine': await cmdMine(args); break;
     case 'consolidate': await cmdConsolidate(args); break;
+    case 'recall': cmdRecall(args); break;
+    case 'cleanup': cmdCleanup(args); break;
+    case 'export': cmdExport(args); break;
+    case 'import': cmdImport(args); break;
     case 'stats': cmdStats(args); break;
     case 'verify': cmdVerify(args); break;
     case 'help': case '--help': case '-h': print(HELP); break;

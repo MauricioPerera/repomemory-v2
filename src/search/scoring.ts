@@ -36,9 +36,13 @@ export function computeScore(params: ScoringParams): number {
 
 export function computeTagOverlap(entityTags: string[], queryTags: string[]): number {
   if (queryTags.length === 0 || entityTags.length === 0) return 0;
-  const querySet = new Set(queryTags);
-  const matches = entityTags.filter(t => querySet.has(t)).length;
-  const union = new Set([...entityTags, ...queryTags]).size;
+  // Normalize both sides to lowercase for case-insensitive matching.
+  // Exact matches are checked first; if a tag didn't match exactly,
+  // we don't stem here because tags are short labels that should match as-is.
+  const querySet = new Set(queryTags.map(t => t.toLowerCase()));
+  const normalized = entityTags.map(t => t.toLowerCase());
+  const matches = normalized.filter(t => querySet.has(t)).length;
+  const union = new Set([...normalized, ...queryTags.map(t => t.toLowerCase())]).size;
   return matches / union;
 }
 

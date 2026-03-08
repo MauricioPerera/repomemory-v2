@@ -63,6 +63,11 @@ Query → synonym expansion (`query-expander.ts`) → tokenize + stopwords → P
 - **Deferred flush**: Individual `save()`/`update()`/`delete()` do NOT flush search indices to disk. Flush happens before `find()`/`findMultiScope()` and at batch boundaries. If adding a new write path, do NOT add per-operation flush — add flush before the read path instead.
 - **Eager LookupIndex**: All scopes are loaded on `init()` into `globalIndex`. `findById()` is always O(1). No fallback scan.
 - **Scoping utility** (`src/scoping.ts`): Single source of truth for scope strings and ref paths. Use `scopeFromEntity()`, `scopeFromParts()`, `refBaseFromEntity()` — do not duplicate the switch logic.
+- **AI request timeouts**: All AI providers use `AbortController` with configurable `timeoutMs` (default 120s). If adding a new provider, always include timeout + abort handling.
+- **Lock backoff**: `LockGuard` uses `Atomics.wait()` for zero-CPU sleep with exponential backoff (10ms base, 500ms cap, jitter). Do NOT revert to busy-wait.
+- **Tag scoring normalization**: `computeTagOverlap()` normalizes to lowercase. Do NOT compare raw entity tags against query tags without normalization.
+- **Skills dedup in mining**: Mining uses `saveOrUpdate()` for both memories and skills. Do NOT use plain `save()` for skills in the mining pipeline — it creates duplicates.
+- **CLI `--base-url`**: The `mine` and `consolidate` commands accept `--base-url` for custom AI endpoints. `OpenAiProvider` also reads `OPENAI_BASE_URL` env var.
 
 ### Key conventions
 

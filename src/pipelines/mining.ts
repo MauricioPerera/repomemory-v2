@@ -76,7 +76,7 @@ export class MiningPipeline {
     }
 
     for (const s of extraction.skills) {
-      const [saved] = this.repo.skills.save(session.agentId, undefined, {
+      const [saved] = this.repo.skills.saveOrUpdate(session.agentId, {
         content: s.content,
         tags: s.tags,
         category: s.category as Skill['category'],

@@ -80,17 +80,33 @@ export class Lockfile {
   }
 }
 
+/**
+ * Sleep using Atomics.wait (does NOT burn CPU like busy-wait).
+ * Falls back to busy-wait only if SharedArrayBuffer is unavailable.
+ */
+function sleepMs(ms: number): void {
+  try {
+    const buf = new SharedArrayBuffer(4);
+    const arr = new Int32Array(buf);
+    Atomics.wait(arr, 0, 0, ms);
+  } catch {
+    // Fallback: busy-wait (only on environments without SharedArrayBuffer)
+    const start = Date.now();
+    while (Date.now() - start < ms) { /* spin */ }
+  }
+}
+
 export class LockGuard {
   private readonly lock: Lockfile;
   private readonly enabled: boolean;
   private readonly maxRetries: number;
-  private readonly retryMs: number;
+  private readonly baseRetryMs: number;
 
-  constructor(baseDir: string, enabled = true, maxRetries = 50, retryMs = 20) {
+  constructor(baseDir: string, enabled = true, maxRetries = 20, baseRetryMs = 10) {
     this.lock = new Lockfile(baseDir);
     this.enabled = enabled;
     this.maxRetries = maxRetries;
-    this.retryMs = retryMs;
+    this.baseRetryMs = baseRetryMs;
   }
 
   withLock<T>(fn: () => T): T {
@@ -102,11 +118,9 @@ export class LockGuard {
       if (retries >= this.maxRetries) {
         throw new Error(`Failed to acquire lock after ${this.maxRetries} retries`);
       }
-      // Synchronous sleep via busy-wait (safe for short durations in Node CLI tools)
-      const start = Date.now();
-      while (Date.now() - start < this.retryMs) {
-        // busy-wait
-      }
+      // Exponential backoff with jitter: baseMs * 2^retries + random jitter, capped at 500ms
+      const delay = Math.min(this.baseRetryMs * Math.pow(2, retries) + Math.random() * 10, 500);
+      sleepMs(Math.round(delay));
     }
 
     try {

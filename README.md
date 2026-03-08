@@ -477,9 +477,10 @@ By default, `compactPrompts` is auto-detected: `true` for Ollama providers, `fal
 ```ts
 import { OllamaProvider, OpenAiProvider, AnthropicProvider } from 'repomemory/ai';
 
-new OllamaProvider({ model: 'llama3.1', baseUrl: 'http://localhost:11434' });
-new OpenAiProvider({ apiKey: '...', model: 'gpt-4o-mini' });       // or OPENAI_API_KEY env
-new AnthropicProvider({ apiKey: '...', model: 'claude-sonnet-4-20250514' }); // or ANTHROPIC_API_KEY env
+new OllamaProvider({ model: 'llama3.1', baseUrl: 'http://localhost:11434', timeoutMs: 120_000 });
+new OpenAiProvider({ apiKey: '...', model: 'gpt-4o-mini', baseUrl: 'http://localhost:8080/v1', timeoutMs: 120_000 });
+// OpenAiProvider also reads OPENAI_API_KEY and OPENAI_BASE_URL env vars as fallbacks
+new AnthropicProvider({ apiKey: '...', model: 'claude-sonnet-4-20250514', timeoutMs: 120_000 }); // or ANTHROPIC_API_KEY env
 ```
 
 ##### Custom Provider
@@ -508,8 +509,8 @@ repomemory history <entityId>
 repomemory snapshot create [label]
 repomemory snapshot list
 repomemory snapshot restore <id>
-repomemory mine <sessionId> [--provider ollama|openai|anthropic] [--model <name>]
-repomemory consolidate --agent <id> [--user <id>] [--type memories|skills|knowledge] [--provider ollama] [--model <name>]
+repomemory mine <sessionId> [--provider ollama|openai|anthropic] [--model <name>] [--base-url <url>]
+repomemory consolidate --agent <id> [--user <id>] [--type memories|skills|knowledge] [--provider ollama] [--model <name>] [--base-url <url>]
 repomemory recall <query> --agent <id> --user <id> [--max-items 20] [--max-chars 8000]
 repomemory cleanup [--max-age 90] [--max-audit 10000] [--dry-run]
 repomemory export <file.json>
@@ -781,6 +782,18 @@ The TF-IDF index is cached to disk and updated incrementally — no full rebuild
 | Shared scoping utility | `src/scoping.ts` centralizes scope/ref-path construction — eliminates 4x duplication across engine, portability, and collections |
 
 ## Changelog
+
+### v2.5.1
+
+**Reliability & Performance**
+
+- **AI request timeouts**: All providers (Ollama, OpenAI, Anthropic) now use `AbortController` with configurable `timeoutMs` (default: 120s). Previously, requests could hang indefinitely if the AI server stopped responding.
+- **CLI `--base-url` flag**: `mine` and `consolidate` commands now accept `--base-url <url>` for pointing at local/custom AI endpoints (e.g., `--provider openai --base-url http://localhost:8080/v1` for llama.cpp).
+- **`OPENAI_BASE_URL` env var**: `OpenAiProvider` now reads `OPENAI_BASE_URL` as a fallback for `baseUrl` config, matching the standard OpenAI SDK convention.
+- **Exponential backoff on lock contention**: `LockGuard` replaced busy-wait spin loop with `Atomics.wait()` (zero CPU usage) and exponential backoff with jitter (10ms base, 500ms cap). Reduces CPU waste under contention by ~99%.
+- **Skills dedup in mining**: Mining pipeline now uses `saveOrUpdate()` for skills (was `save()`), preventing duplicate skills when re-mining similar sessions.
+- **Tag overlap normalization**: `computeTagOverlap()` now normalizes both sides to lowercase before comparison, fixing case-sensitivity mismatches in search scoring.
+- **Async atomic write utility**: Added `atomicWriteFile()` (async version) alongside the existing sync `atomicWriteFileSync()`, preparing for future async I/O migration.
 
 ### v2.5.0
 

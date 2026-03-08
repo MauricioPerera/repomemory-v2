@@ -9,12 +9,13 @@ export async function cmdConsolidate(args: ParsedArgs): Promise<void> {
   const userId = args.flags.user as string | undefined;
   const provider = (args.flags.provider as string) ?? 'ollama';
   const model = args.flags.model as string | undefined;
+  const baseUrl = args.flags['base-url'] as string | undefined;
   const type = (args.flags.type as string) ?? 'memories';
 
   if (!agentId) { printError('--agent required'); return; }
   if (type === 'memories' && !userId) { printError('--user required for memory consolidation'); return; }
 
-  const ai = await createAiProvider(provider, model);
+  const ai = await createAiProvider(provider, model, baseUrl);
   if (!ai) { printError(`Unknown provider: ${provider}`); return; }
 
   const mem = new RepoMemory({ dir, ai });

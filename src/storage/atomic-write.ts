@@ -1,4 +1,5 @@
 import { writeFileSync, renameSync, unlinkSync } from 'node:fs';
+import { writeFile, rename, unlink } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { dirname, join } from 'node:path';
 
@@ -10,6 +11,18 @@ export function atomicWriteFileSync(filePath: string, data: string): void {
     renameSync(tmp, filePath);
   } catch (e) {
     try { unlinkSync(tmp); } catch { /* best effort */ }
+    throw e;
+  }
+}
+
+export async function atomicWriteFile(filePath: string, data: string): Promise<void> {
+  const dir = dirname(filePath);
+  const tmp = join(dir, `.tmp-${randomBytes(6).toString('hex')}`);
+  try {
+    await writeFile(tmp, data, 'utf8');
+    await rename(tmp, filePath);
+  } catch (e) {
+    try { await unlink(tmp); } catch { /* best effort */ }
     throw e;
   }
 }

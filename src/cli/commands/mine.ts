@@ -8,10 +8,11 @@ export async function cmdMine(args: ParsedArgs): Promise<void> {
   const sessionId = args.subcommand;
   const provider = (args.flags.provider as string) ?? 'ollama';
   const model = args.flags.model as string | undefined;
+  const baseUrl = args.flags['base-url'] as string | undefined;
 
   if (!sessionId) { printError('Session ID required'); return; }
 
-  const ai = await createAiProvider(provider, model);
+  const ai = await createAiProvider(provider, model, baseUrl);
   if (!ai) { printError(`Unknown provider: ${provider}`); return; }
 
   const mem = new RepoMemory({ dir, ai });

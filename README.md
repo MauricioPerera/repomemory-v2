@@ -27,6 +27,7 @@ RepoMemory provides persistent, versioned memory for AI agents. Every change is 
 - **TTL cleanup** — remove stale entities by age, with dry-run support and audit log rotation
 - **File locking** — filesystem-based mutex wraps every `save()` and `delete()` for concurrent access safety (configurable via `lockEnabled`)
 - **AI validation** — strict schema validators on AI responses (non-empty content, typed tags, valid IDs) with automatic retry on malformed output
+- **RAG pipeline** — ingest documents from disk, chunk with 3 strategies (fixed/paragraph/markdown), query with optional AI answer generation, incremental sync via SHA-256 hashing. Zero embeddings — reuses TF-IDF search
 - **Optional AI** — mining and consolidation (memories, skills, knowledge) via OpenAI, Anthropic, or Ollama
 - **Zero runtime dependencies** — only Node.js built-ins (`node:fs`, `node:path`, `node:crypto`, `fetch`)
 - **Middleware pipeline** — `use()` to register `beforeSave`/`beforeUpdate`/`beforeDelete` hooks for validation, transformation, or vetoing operations
@@ -504,6 +505,61 @@ class MyProvider implements AiProvider {
 }
 ```
 
+#### RAG Pipeline (document ingestion & retrieval)
+
+The RAG module ingests documents from disk, chunks them, stores as Knowledge entities, and enables retrieval with optional AI-generated answers. No embeddings needed — it reuses the existing TF-IDF search.
+
+```ts
+import { RepoMemory } from '@rckflr/repomemory';
+
+const mem = new RepoMemory({ dir: '.repomemory' });
+
+// Ingest a file or directory
+const ingestResult = await mem.ragIngest('./docs', 'agent-1', {
+  chunkSize: 1000,       // optional (default: 1000 chars)
+  overlap: 200,          // optional (default: 200 chars)
+  strategy: 'markdown',  // optional: 'fixed' | 'paragraph' | 'markdown' (auto-detected)
+});
+// { filesProcessed: 5, chunksIngested: 42, chunksCreated: 42, chunksDeduplicated: 0, skipped: [] }
+
+// Query (without AI — returns matching chunks)
+const queryResult = await mem.ragQuery('agent-1', 'how to deploy');
+// { chunks: [...], context: '...', chunksUsed: 5, answer: null }
+
+// Query with AI (generates answer from context)
+import { OllamaProvider } from '@rckflr/repomemory/ai';
+const memAi = new RepoMemory({
+  dir: '.repomemory',
+  ai: new OllamaProvider({ model: 'llama3.1' }),
+});
+const aiResult = await memAi.ragQuery('agent-1', 'how to deploy', { limit: 10 });
+// { chunks: [...], context: '...', chunksUsed: 5, answer: 'To deploy, run...' }
+
+// Sync — detect changes and re-ingest only modified/new files
+const syncResult = await mem.ragSync('./docs', 'agent-1');
+// { unchangedFiles: 3, modifiedFiles: 1, newFiles: 1, deletedFiles: 0, chunksCreated: 8, chunksRemoved: 5 }
+```
+
+You can also use the `RagPipeline` class directly:
+
+```ts
+import { RagPipeline } from '@rckflr/repomemory/rag';
+
+const rag = new RagPipeline(mem, { chunkSize: 500, strategy: 'paragraph' });
+await rag.ingest('./docs', { agent: 'agent-1' });
+const result = await rag.query('agent-1', 'search query');
+await rag.sync('./docs', { agent: 'agent-1' });
+```
+
+**Chunking strategies:**
+- `fixed` — sliding window with overlap (best for code)
+- `paragraph` — splits on double newlines (best for prose)
+- `markdown` — splits on headings `# ... ######` (best for `.md` files)
+
+Strategy is auto-detected from file extension when not specified.
+
+**Supported file types:** `.md .txt .ts .js .json .py .html .css`
+
 ## CLI Reference
 
 ```
@@ -523,6 +579,10 @@ repomemory recall <query> --agent <id> --user <id> [--max-items 20] [--max-chars
 repomemory cleanup [--max-age 90] [--max-audit 10000] [--dry-run]
 repomemory export <file.json>
 repomemory import <file.json> [--skip-existing]
+repomemory rag ingest <path> --agent <id> [--chunk-size 1000] [--overlap 200] [--strategy markdown]
+repomemory rag query <query> --agent <id> [--limit 10] [--provider ollama] [--model <name>] [--base-url <url>]
+repomemory rag sync <path> --agent <id> [--chunk-size 1000] [--overlap 200]
+repomemory rag status --agent <id>
 repomemory stats
 repomemory verify
 ```
@@ -554,7 +614,7 @@ Add to your MCP client configuration (e.g., Claude Desktop, Cursor, etc.):
 }
 ```
 
-### Available Tools (23)
+### Available Tools (27)
 
 | Tool | Description |
 |------|-------------|
@@ -579,6 +639,10 @@ Add to your MCP client configuration (e.g., Claude Desktop, Cursor, etc.):
 | `mine` | Extract memories/skills/profile from a session (requires AI provider) |
 | `stats` | Get storage statistics |
 | `verify` | Run integrity check |
+| `rag_ingest` | Ingest a file or directory into RAG knowledge |
+| `rag_query` | Query RAG knowledge with optional AI answer |
+| `rag_sync` | Sync a directory (detect changes, re-ingest) |
+| `rag_status` | Show RAG stats for an agent |
 | `export` | Export all entities as portable JSON |
 | `import` | Import entities from export payload |
 
@@ -698,6 +762,14 @@ RepoMemory (facade)
 +-- Cleanup
 |   +-- runCleanup          TTL-based entity removal with dry-run and audit rotation
 |
++-- RAG Pipeline (sub-export: repomemory/rag, lazy-loaded)
+|   +-- RagPipeline         Facade: ingest, query, sync
+|   +-- Chunker             3 strategies: fixed (sliding window), paragraph, markdown (headers)
+|   +-- Loader              Load files/directories with extension filter + size/depth limits
+|   +-- Ingest              Load → chunk → saveOrUpdate as Knowledge with source/version/hash
+|   +-- Query               Search chunks → build context → optional AI answer generation
+|   +-- Sync                Hash-based change detection: unchanged/modified/new/deleted
+|
 +-- AI Pipelines (optional, lazy-loaded)
 |   +-- MiningPipeline              Extract memories + skills + profile from session (structured messages aware)
 |   +-- ConsolidationPipeline       Merge/dedup memories by category (chunks of 20)
@@ -723,7 +795,7 @@ RepoMemory (facade)
 |   +-- importData         Restore entities preserving IDs, re-index, restore access counts
 |
 +-- MCP Server (bin: repomemory-mcp)
-|   +-- handler.ts         Protocol logic: 23 tools, JSON-RPC dispatch (testable independently)
+|   +-- handler.ts         Protocol logic: 27 tools, JSON-RPC dispatch (testable independently)
 |   +-- mcp.ts             Stdio transport: Content-Length framing, buffer parsing
 |
 +-- HTTP Server (bin: repomemory-http)
@@ -792,8 +864,33 @@ The TF-IDF index is cached to disk and updated incrementally — no full rebuild
 | 1 MB content limit | Prevents DoS via oversized entities without rejecting legitimate large content (code files, long docs) |
 | Bounded scans with configurable limits | `MAX_SCAN=5000` in listConversations, `maxResults=10000` in prefix scan, `limit=50` in cross-agent profiles — prevents OOM without sacrificing normal-use coverage |
 | Input ID validation | Rejects `/`, `\`, `:`, `\0`, `..` in entity/agent/user IDs — prevents path traversal via crafted IDs stored as ref paths |
+| RAG without embeddings | TF-IDF + chunking is sufficient for document Q&A when corpus is small-to-medium; avoids vector DB dependency |
+| SHA-256 chunk versioning | Each chunk's hash is stored as `version` — sync compares hashes to detect modifications without re-reading all stored entities |
+| Auto-detected chunk strategy | File extension determines chunking: `.md` → markdown, code → fixed, prose → paragraph — sensible defaults without config |
+| RAG as sub-export | `@rckflr/repomemory/rag` is tree-shakeable; core library size unaffected for users who don't need RAG |
 
 ## Changelog
+
+### v2.14.0
+
+**RAG Pipeline — Document Ingestion & Retrieval**
+
+- **RAG pipeline module** (`@rckflr/repomemory/rag`): Zero-dependency RAG (Retrieval-Augmented Generation) pipeline that reuses existing TF-IDF search and Knowledge storage. No embeddings or vector DB required.
+- **3 chunking strategies**: `fixed` (sliding window with overlap), `paragraph` (split on `\n\n`), `markdown` (split on headings `#{1-6}`). Auto-detected from file extension.
+- **Document ingestion** (`ragIngest`): Load files or directories from disk, chunk them, and store as Knowledge entities with `source`, `chunkIndex`, and `version` (SHA-256 hash) fields. Deduplicates via `saveOrUpdate()`.
+- **RAG query** (`ragQuery`): Search relevant chunks by text query. Optionally generates an AI answer from the retrieved context using any configured provider.
+- **Incremental sync** (`ragSync`): Compares file content hashes against stored chunk versions. Only re-ingests modified and new files; removes chunks for deleted files. Skips unchanged files entirely.
+- **RagPipeline facade**: `new RagPipeline(mem, config?)` with `ingest()`, `query()`, `sync()` methods.
+- **4 new MCP tools**: `rag_ingest`, `rag_query`, `rag_sync`, `rag_status`.
+- **4 CLI subcommands**: `rag ingest|query|sync|status` with full flag support.
+- **3 facade methods**: `mem.ragIngest()`, `mem.ragQuery()`, `mem.ragSync()` on the main `RepoMemory` class.
+- **3 new events**: `rag:ingest:done`, `rag:query:done`, `rag:sync:done`.
+- **2 new error codes**: `RAG_LOAD_ERROR`, `RAG_INGEST_ERROR`.
+- **New build entry point**: `dist/rag/` with ESM + .d.ts + sourcemaps.
+- **Supported file types**: `.md .txt .ts .js .json .py .html .css`. Skips `node_modules`, `.git`, hidden directories. Max depth 10, max file 1 MB.
+
+**Tests**
+- Added 59 new tests across 6 files: chunker (19), loader (14), ingest (8), query (7), sync (6), pipeline end-to-end (5). Total: ~414 tests across 36 files.
 
 ### v2.13.0
 
@@ -984,7 +1081,7 @@ npm run build        # Build ESM + .d.ts + sourcemaps (tsup)
 
 ### Running Tests
 
-Tests use temporary directories and clean up after themselves. ~355 tests across 30 files:
+Tests use temporary directories and clean up after themselves. ~414 tests across 36 files:
 
 - **Unit tests**: tokenizer, TF-IDF, scoring, JSON serialization, CLI parser
 - **Storage tests**: object store, commit store, ref store, engine, snapshots
@@ -998,6 +1095,7 @@ Tests use temporary directories and clean up after themselves. ~355 tests across
 - **v2.11 scalability tests**: scope encoding collision prevention (2), content size limits (4), conversation pagination (3), profile cross-agent limits (3), prefix scan bounds (2)
 - **v2.12 hardening**: no new test files — all changes are internal robustness improvements validated by existing tests
 - **v2.13 hardening tests**: broken commit chains, tag caps, path traversal, entity type validation, search limits, query stemming, snapshot validation, audit rotation, stray files, symlink protection, stemmer idempotence, index rebuild (23 tests)
+- **v2.14 RAG tests**: chunker strategies (19), file/directory loader (14), ingest pipeline (8), query with/without AI (7), sync change detection (6), end-to-end pipeline (5) — 59 tests across 6 files
 - **Benchmarks**: save/saveMany throughput, search latency
 
 ```bash

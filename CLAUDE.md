@@ -17,13 +17,14 @@ npx vitest --watch                   # Watch mode
 
 RepoMemory is a Git-inspired persistent memory system for AI agents. Zero runtime dependencies — only `node:fs`, `node:path`, `node:crypto`, and `fetch`. ESM-only (`"type": "module"`).
 
-### Five build entry points (tsup)
+### Six build entry points (tsup)
 
 1. `src/index.ts` → `dist/index.js` — Core library
 2. `src/ai/index.ts` → `dist/ai/index.js` — AI providers (sub-export `repomemory/ai`)
-3. `src/cli.ts` → `dist/cli.js` — CLI binary (`repomemory`)
-4. `src/mcp.ts` → `dist/mcp.js` — MCP server binary (`repomemory-mcp`)
-5. `src/http.ts` → `dist/http.js` — HTTP API binary (`repomemory-http`)
+3. `src/rag/index.ts` → `dist/rag/index.js` — RAG pipeline (sub-export `repomemory/rag`)
+4. `src/cli.ts` → `dist/cli.js` — CLI binary (`repomemory`)
+5. `src/mcp.ts` → `dist/mcp.js` — MCP server binary (`repomemory-mcp`)
+6. `src/http.ts` → `dist/http.js` — HTTP API binary (`repomemory-http`)
 
 ### Core data flow: Git-like storage
 
@@ -45,7 +46,8 @@ Deletes create a **tombstone commit** (`objectHash: "TOMBSTONE"`). The ref still
 - **`SearchEngine`** (`src/search/search-engine.ts`) — Manages scoped TF-IDF indices. Each `type:agentId:userId` combination has its own index, serialized to disk.
 - **`RecallEngine`** (`src/recall/engine.ts`) — Score-based multi-collection query. Pools all results and takes top N by composite score.
 - **`MiddlewareChain`** (`src/middleware.ts`) — Ordered beforeSave/beforeUpdate/beforeDelete hooks. Short-circuits on null/false.
-- **`MCP handler`** (`src/mcp/handler.ts`) — 23 tools, JSON-RPC dispatch. Shared by both MCP and HTTP servers.
+- **`MCP handler`** (`src/mcp/handler.ts`) — 27 tools, JSON-RPC dispatch. Shared by both MCP and HTTP servers.
+- **`RAG Pipeline`** (`src/rag/`) — Document ingestion (chunker, loader, ingest), query with optional AI answers, incremental sync via SHA-256 hashing. Lazy-loaded from facade.
 - **`Portability`** (`src/portability.ts`) — Export/import of all entities + access counts as portable JSON.
 
 ### Scoping model

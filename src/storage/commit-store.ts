@@ -39,10 +39,17 @@ export class CommitStore {
     return safeJsonParse<CommitInfo>(readFileSync(path, 'utf8'));
   }
 
-  history(headHash: string): CommitInfo[] {
+  /** Maximum commit history depth to prevent stack overflow on cyclic or very long chains */
+  static readonly MAX_HISTORY_DEPTH = 10_000;
+
+  history(headHash: string, maxDepth: number = CommitStore.MAX_HISTORY_DEPTH): CommitInfo[] {
     const chain: CommitInfo[] = [];
+    const visited = new Set<string>();
     let current: string | null = headHash;
     while (current) {
+      if (chain.length >= maxDepth) break;
+      if (visited.has(current)) break; // cycle detection
+      visited.add(current);
       const commit = this.read(current);
       chain.push(commit);
       current = commit.parent;

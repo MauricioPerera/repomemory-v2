@@ -106,14 +106,15 @@ describe('KnowledgeCollection.saveOrUpdate', () => {
       source: 'docs/database.md',
     });
 
+    // v2.10.0: dedup requires same source (or both undefined)
     const [updated, , meta] = repo.knowledge.saveOrUpdate('a1', {
       content: 'PostgreSQL JSONB columns support semi-structured data with indexing',
       tags: ['postgresql', 'jsonb', 'indexing'],
-      source: 'docs/database-v2.md',
+      source: 'docs/database.md',
     });
     expect(meta.deduplicated).toBe(true);
     expect(updated.content).toContain('indexing');
-    expect(updated.source).toBe('docs/database-v2.md');
+    expect(updated.source).toBe('docs/database.md');
   });
 
   it('does not deduplicate unrelated knowledge', () => {

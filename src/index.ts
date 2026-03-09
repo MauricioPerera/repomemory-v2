@@ -37,6 +37,7 @@ export class RepoMemory {
   private readonly accessTracker: AccessTracker;
   private readonly ai?: AiProvider;
   private readonly middlewareChain: MiddlewareChain;
+  private autoMineHandler?: EventHandler<'entity:save'>;
 
   constructor(config: RepoMemoryConfig) {
     this.config = config;
@@ -72,7 +73,7 @@ export class RepoMemory {
     }
 
     if (config.autoMine && config.ai) {
-      this.events.on('entity:save', ({ entity }) => {
+      this.autoMineHandler = ({ entity }) => {
         if (entity.type === 'session') {
           this.mine(entity.id).catch(err => {
             this.events.emit('session:automine:error', {
@@ -81,7 +82,8 @@ export class RepoMemory {
             });
           });
         }
-      });
+      };
+      this.events.on('entity:save', this.autoMineHandler);
     }
   }
 
@@ -100,6 +102,20 @@ export class RepoMemory {
   flush(): void {
     this.searchEngine.flush();
     this.accessTracker.flush();
+  }
+
+  /** Clean up event listeners and flush pending data. Call when discarding the instance. */
+  dispose(): void {
+    if (this.autoMineHandler) {
+      this.events.off('entity:save', this.autoMineHandler);
+      this.autoMineHandler = undefined;
+    }
+    this.flush();
+  }
+
+  /** Rebuild lookup index from refs. Use after crash recovery or when verify() reports errors. */
+  rebuildIndex(): { rebuilt: number; orphaned: number } {
+    return this.storage.rebuildLookupIndex();
   }
 
   snapshot(label: string): SnapshotInfo {
@@ -164,7 +180,12 @@ export class RepoMemory {
   }
 
   cleanup(options: CleanupOptions = {}): CleanupReport {
-    return runCleanup(this, this.storage, options);
+    const report = runCleanup(this, this.storage, options);
+    // Flush search index changes to disk after deletions
+    if (report.removed > 0 && !options.dryRun) {
+      this.searchEngine.flush();
+    }
+    return report;
   }
 
   export(): ExportData {

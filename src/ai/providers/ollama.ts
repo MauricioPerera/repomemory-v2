@@ -2,6 +2,19 @@ import type { AiProvider, AiMessage } from '../../types/ai.js';
 import { RepoMemoryError } from '../../types/errors.js';
 
 const DEFAULT_TIMEOUT_MS = 120_000; // 2 minutes
+const MAX_RETRIES = 2;
+const RETRY_BASE_MS = 1000;
+
+/** Transient errors worth retrying: network failures, rate limits, server errors */
+function isTransient(e: unknown): boolean {
+  if (e instanceof RepoMemoryError && e.message.includes('timed out')) return true;
+  if (e instanceof TypeError) return true; // fetch network error
+  if (e instanceof RepoMemoryError) {
+    const m = e.message;
+    if (/\b(429|500|502|503|504)\b/.test(m)) return true;
+  }
+  return false;
+}
 
 export interface OllamaConfig {
   model?: string;
@@ -34,6 +47,24 @@ export class OllamaProvider implements AiProvider {
   }
 
   async chat(messages: AiMessage[]): Promise<string> {
+    let lastError: unknown;
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        return await this.doChat(messages);
+      } catch (e) {
+        lastError = e;
+        if (attempt < MAX_RETRIES && isTransient(e)) {
+          const delay = RETRY_BASE_MS * Math.pow(2, attempt) + Math.random() * 500;
+          await new Promise(r => setTimeout(r, delay));
+          continue;
+        }
+        throw e;
+      }
+    }
+    throw lastError;
+  }
+
+  private async doChat(messages: AiMessage[]): Promise<string> {
     const body: Record<string, unknown> = {
       model: this.model,
       messages,

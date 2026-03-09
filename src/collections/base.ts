@@ -5,6 +5,7 @@ import { AccessTracker } from '../storage/access-tracker.js';
 import { computeScore, computeTagOverlap, daysBetween } from '../search/scoring.js';
 import type { ScoringWeights } from '../search/scoring.js';
 import { expandQuery } from '../search/query-expander.js';
+import { stem } from '../search/stemmer.js';
 import type { Entity, EntityType } from '../types/entities.js';
 import type { SearchResult, CommitInfo, ListOptions, ListResult } from '../types/results.js';
 import { RepoMemoryError } from '../types/errors.js';
@@ -193,14 +194,9 @@ export abstract class BaseCollection<T extends Entity> {
     return this.storage.countEntities(this.entityType, agentId, userId);
   }
 
-  find(agentId: string, userId: string | undefined, query: string, limit = 10): SearchResult<T>[] {
-    this.searchEngine.flush(); // ensure pending index updates are applied before searching
-    const scope = this.searchScope(agentId, userId);
-    const expanded = expandQuery(query);
-    const ranked = this.searchEngine.rank(scope, expanded, limit * 3);
-    const queryTags = expanded.toLowerCase().split(/\s+/).filter(t => t.length > 1);
+  /** Score and rank TF-IDF results with composite scoring (shared by find/findMultiScope) */
+  private scoreAndRank(ranked: Array<{ id: string; tfidfScore: number }>, queryTags: string[], limit: number): SearchResult<T>[] {
     const now = new Date();
-
     const scored: SearchResult<T>[] = [];
     for (const { id, tfidfScore } of ranked) {
       const entity = this.get(id);
@@ -211,7 +207,7 @@ export abstract class BaseCollection<T extends Entity> {
 
       const score = computeScore({
         tfidfScore,
-        tagOverlap: computeTagOverlap(tags, queryTags),
+        tagOverlap: computeTagOverlap(tags, queryTags, stem),
         daysSinceUpdate: daysBetween(entity.updatedAt, now),
         accessCount,
         weights: this.scoringWeights,
@@ -224,34 +220,21 @@ export abstract class BaseCollection<T extends Entity> {
     return scored.slice(0, limit);
   }
 
+  find(agentId: string, userId: string | undefined, query: string, limit = 10): SearchResult<T>[] {
+    this.searchEngine.flush(); // ensure pending index updates are applied before searching
+    const scope = this.searchScope(agentId, userId);
+    const expanded = expandQuery(query);
+    const ranked = this.searchEngine.rank(scope, expanded, limit * 3);
+    const queryTags = expanded.toLowerCase().split(/\s+/).filter(t => t.length > 1);
+    return this.scoreAndRank(ranked, queryTags, limit);
+  }
+
   findMultiScope(scopes: string[], query: string, limit = 10): SearchResult<T>[] {
     this.searchEngine.flush();
     const expanded = expandQuery(query);
     const ranked = this.searchEngine.rankMultiScope(scopes, expanded, limit * 3);
     const queryTags = expanded.toLowerCase().split(/\s+/).filter(t => t.length > 1);
-    const now = new Date();
-
-    const scored: SearchResult<T>[] = [];
-    for (const { id, tfidfScore } of ranked) {
-      const entity = this.get(id);
-      if (!entity) continue;
-
-      const tags = 'tags' in entity ? (entity.tags as string[]) : [];
-      const accessCount = 'accessCount' in entity ? (entity.accessCount as number) : 0;
-
-      const score = computeScore({
-        tfidfScore,
-        tagOverlap: computeTagOverlap(tags, queryTags),
-        daysSinceUpdate: daysBetween(entity.updatedAt, now),
-        accessCount,
-        weights: this.scoringWeights,
-      });
-
-      scored.push({ entity, score });
-    }
-
-    scored.sort((a, b) => b.score - a.score);
-    return scored.slice(0, limit);
+    return this.scoreAndRank(ranked, queryTags, limit);
   }
 
   history(entityId: string): CommitInfo[] {

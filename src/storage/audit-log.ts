@@ -31,7 +31,15 @@ export class AuditLog {
     if (!existsSync(this.path)) return [];
     const content = readFileSync(this.path, 'utf8').trim();
     if (!content) return [];
-    return content.split('\n').map(line => JSON.parse(line) as AuditEntry);
+    const entries: AuditEntry[] = [];
+    for (const line of content.split('\n')) {
+      try {
+        entries.push(JSON.parse(line) as AuditEntry);
+      } catch {
+        // Skip corrupted lines instead of crashing the entire read
+      }
+    }
+    return entries;
   }
 
   /**

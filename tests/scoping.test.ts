@@ -177,20 +177,21 @@ describe('Conversations', () => {
     mem.sessions.save('a1', 'u1', { content: 'S3', conversationId: 'conv-2' });
     mem.sessions.save('a1', 'u1', { content: 'S4' }); // no conversation
 
-    const convos = mem.sessions.listConversations('a1', 'u1');
-    expect(convos).toHaveLength(2);
+    const result = mem.sessions.listConversations('a1', 'u1');
+    expect(result.items).toHaveLength(2);
+    expect(result.total).toBe(2);
 
-    const conv1 = convos.find(c => c.conversationId === 'conv-1')!;
+    const conv1 = result.items.find(c => c.conversationId === 'conv-1')!;
     expect(conv1.count).toBe(2);
 
-    const conv2 = convos.find(c => c.conversationId === 'conv-2')!;
+    const conv2 = result.items.find(c => c.conversationId === 'conv-2')!;
     expect(conv2.count).toBe(1);
   });
 
   it('listConversations returns empty array when no conversations', () => {
     mem.sessions.save('a1', 'u1', { content: 'No conv' });
-    const convos = mem.sessions.listConversations('a1', 'u1');
-    expect(convos).toHaveLength(0);
+    const result = mem.sessions.listConversations('a1', 'u1');
+    expect(result.items).toHaveLength(0);
   });
 });
 

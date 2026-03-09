@@ -25,14 +25,19 @@ export class ProfileCollection extends BaseCollection<Profile> {
     return profiles.reduce((a, b) => a.updatedAt > b.updatedAt ? a : b);
   }
 
-  getByUserAcrossAgents(userId: string): Profile[] {
+  getByUserAcrossAgents(userId: string, limit = 50): Profile[] {
     const prefix = `profiles:`;
     const entities = this.storage.listEntitiesByPrefix(prefix);
-    const profiles = entities.filter(
-      (e): e is Profile => e.type === 'profile' && e.userId === userId,
-    );
+    const profiles: Profile[] = [];
+    for (const e of entities) {
+      if (e.type === 'profile' && e.userId === userId) {
+        profiles.push(e as Profile);
+        // Stop early once we have enough candidates (limit * 2 for sort margin)
+        if (profiles.length >= limit * 2) break;
+      }
+    }
     profiles.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-    return profiles;
+    return profiles.slice(0, limit);
   }
 
   saveShared(userId: string, input: Record<string, unknown>): [Profile, CommitInfo] {

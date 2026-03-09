@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync, cpSync, rmSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, cpSync, rmSync, readdirSync, statSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import type { SnapshotInfo } from '../types/results.js';
@@ -8,10 +8,12 @@ import { safeJsonParse, safeJsonStringify } from '../serialization/json.js';
 export class SnapshotManager {
   private readonly dir: string;
   private readonly baseDir: string;
+  private readonly lockPath: string;
 
   constructor(baseDir: string) {
     this.baseDir = baseDir;
     this.dir = join(baseDir, 'snapshots');
+    this.lockPath = join(baseDir, '.restore.lock');
   }
 
   init(): void {
@@ -45,18 +47,75 @@ export class SnapshotManager {
     return info;
   }
 
+  private acquireLock(): void {
+    if (existsSync(this.lockPath)) {
+      // Check for stale lock (older than 5 minutes)
+      const lockAge = Date.now() - statSync(this.lockPath).mtimeMs;
+      if (lockAge < 5 * 60 * 1000) {
+        throw new RepoMemoryError('SNAPSHOT_ERROR', 'Another restore operation is in progress');
+      }
+      // Stale lock — remove and proceed
+      unlinkSync(this.lockPath);
+    }
+    writeFileSync(this.lockPath, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }), 'utf8');
+  }
+
+  private releaseLock(): void {
+    if (existsSync(this.lockPath)) {
+      unlinkSync(this.lockPath);
+    }
+  }
+
   restore(snapshotId: string): void {
     const snapDir = join(this.dir, snapshotId);
     if (!existsSync(snapDir)) {
       throw new RepoMemoryError('NOT_FOUND', `Snapshot not found: ${snapshotId}`);
     }
 
-    // Remove current refs, index, objects, commits — replace with snapshot
-    for (const sub of ['refs', 'index', 'objects', 'commits']) {
-      const target = join(this.baseDir, sub);
-      if (existsSync(target)) rmSync(target, { recursive: true });
-      const src = join(snapDir, sub);
-      if (existsSync(src)) cpSync(src, target, { recursive: true });
+    const subs = ['refs', 'index', 'objects', 'commits'];
+
+    // Validate: ensure snapshot has at least some data before destructive restore
+    const hasData = subs.some(sub => existsSync(join(snapDir, sub)));
+    if (!hasData) {
+      throw new RepoMemoryError('INVALID_INPUT', `Snapshot ${snapshotId} contains no data directories`);
+    }
+
+    // Acquire lock to prevent concurrent restores
+    this.acquireLock();
+
+    try {
+      // Stage 1: Copy snapshot data into temporary staging area
+      const stagingDir = join(this.baseDir, '.restore-staging');
+      if (existsSync(stagingDir)) rmSync(stagingDir, { recursive: true });
+      mkdirSync(stagingDir, { recursive: true });
+      for (const sub of subs) {
+        const src = join(snapDir, sub);
+        if (existsSync(src)) cpSync(src, join(stagingDir, sub), { recursive: true });
+      }
+
+      // Validate staging: ensure all expected dirs were copied before destructive step
+      for (const sub of subs) {
+        const src = join(snapDir, sub);
+        const staged = join(stagingDir, sub);
+        if (existsSync(src) && !existsSync(staged)) {
+          // Stage 1 failed partially — clean up staging and abort
+          rmSync(stagingDir, { recursive: true });
+          throw new RepoMemoryError('SNAPSHOT_ERROR', `Staging failed: ${sub} was not copied`);
+        }
+      }
+
+      // Stage 2: Remove current data and move staged data into place
+      for (const sub of subs) {
+        const target = join(this.baseDir, sub);
+        if (existsSync(target)) rmSync(target, { recursive: true });
+        const staged = join(stagingDir, sub);
+        if (existsSync(staged)) cpSync(staged, target, { recursive: true });
+      }
+
+      // Cleanup staging
+      rmSync(stagingDir, { recursive: true });
+    } finally {
+      this.releaseLock();
     }
   }
 

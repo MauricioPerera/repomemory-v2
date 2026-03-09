@@ -85,25 +85,37 @@ for (const [abbrev, expansions] of Object.entries(SYNONYMS)) {
   }
 }
 
+const MAX_EXPANDED_TOKENS = 20;
+
 /**
  * Expand a query by adding synonyms/abbreviations for each token.
  * Original tokens are always preserved. Expansions are appended.
+ * Capped at MAX_EXPANDED_TOKENS to prevent search performance degradation.
  */
 export function expandQuery(query: string): string {
   const tokens = query.toLowerCase().split(/\s+/).filter(t => t.length > 0);
   const expanded = new Set(tokens);
 
   for (const token of tokens) {
+    if (expanded.size >= MAX_EXPANDED_TOKENS) break;
+
     // Forward: abbreviation → full terms
     const synonyms = SYNONYMS[token];
     if (synonyms) {
-      for (const s of synonyms) expanded.add(s);
+      for (const s of synonyms) {
+        if (expanded.size >= MAX_EXPANDED_TOKENS) break;
+        expanded.add(s);
+      }
     }
 
-    // Reverse: full term → abbreviations
+    // Reverse: full term → abbreviations (skip if already at cap)
+    if (expanded.size >= MAX_EXPANDED_TOKENS) break;
     const reverses = reverseMap.get(token);
     if (reverses) {
-      for (const r of reverses) expanded.add(r);
+      for (const r of reverses) {
+        if (expanded.size >= MAX_EXPANDED_TOKENS) break;
+        expanded.add(r);
+      }
     }
   }
 

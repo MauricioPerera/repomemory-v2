@@ -1,6 +1,6 @@
 {
   "name": "repomemory",
-  "version": "2.5.1",
+  "version": "2.11.0",
   "description": "Git-inspired agentic memory system — library + CLI",
   "type": "module",
   "main": "dist/index.js",

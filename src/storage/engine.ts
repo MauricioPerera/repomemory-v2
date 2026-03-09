@@ -13,6 +13,9 @@ import { scopeFromEntity, scopeFromParts, refBaseFromEntity } from '../scoping.j
 
 const VERSION = '2';
 
+/** Maximum content size in bytes (1 MB). Prevents DoS via oversized entities. */
+const MAX_CONTENT_SIZE = 1_048_576;
+
 export class StorageEngine {
   readonly objects: ObjectStore;
   readonly commits: CommitStore;
@@ -49,6 +52,32 @@ export class StorageEngine {
     return existsSync(join(this.baseDir, 'VERSION'));
   }
 
+  /**
+   * Rebuild the lookup index from refs on disk.
+   * Recovers from lookup/ref desynchronization caused by crashes mid-write.
+   */
+  rebuildLookupIndex(): { rebuilt: number; orphaned: number } {
+    const allRefs = this.refs.listAll();
+    let rebuilt = 0;
+    let orphaned = 0;
+    for (const refPath of allRefs) {
+      const ref = this.refs.get(refPath);
+      if (!ref) { orphaned++; continue; }
+      try {
+        const commit = this.commits.read(ref.head);
+        if (commit.objectHash === TOMBSTONE) continue;
+        const obj = this.objects.read(commit.objectHash);
+        const entity = obj.data as Entity;
+        const scope = scopeFromEntity(entity);
+        this.lookup.set(scope, entity.id, refPath);
+        rebuilt++;
+      } catch {
+        orphaned++;
+      }
+    }
+    return { rebuilt, orphaned };
+  }
+
   getVersion(): string {
     const versionPath = join(this.baseDir, 'VERSION');
     if (!existsSync(versionPath)) return '0';
@@ -66,6 +95,13 @@ export class StorageEngine {
     if ('agentId' in entity) this.validateId((entity as { agentId: string }).agentId, 'agentId');
     if ('userId' in entity && (entity as { userId: string }).userId) {
       this.validateId((entity as { userId: string }).userId, 'userId');
+    }
+    // Prevent DoS via oversized content
+    if ('content' in entity && typeof (entity as { content: string }).content === 'string') {
+      const contentLen = Buffer.byteLength((entity as { content: string }).content, 'utf8');
+      if (contentLen > MAX_CONTENT_SIZE) {
+        throw new RepoMemoryError('INVALID_INPUT', `Content too large: ${contentLen} bytes (max ${MAX_CONTENT_SIZE})`);
+      }
     }
   }
 
@@ -181,10 +217,11 @@ export class StorageEngine {
     return { items, total };
   }
 
-  listEntitiesByPrefix(prefix: string): Entity[] {
+  listEntitiesByPrefix(prefix: string, maxResults = 10_000): Entity[] {
     const entries = this.lookup.listByPrefix(prefix);
     const entities: Entity[] = [];
     for (const [, refPath] of entries) {
+      if (entities.length >= maxResults) break;
       const ref = this.refs.get(refPath);
       if (!ref) continue;
       const commit = this.commits.read(ref.head);

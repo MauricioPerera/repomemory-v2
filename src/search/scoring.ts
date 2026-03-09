@@ -28,21 +28,29 @@ export function computeScore(params: ScoringParams): number {
   const { tfidfScore, tagOverlap, daysSinceUpdate, accessCount, weights } = params;
   const w = { ...DEFAULT_SCORING_WEIGHTS, ...weights };
   const relevance = tfidfScore * w.tfidfWeight + tagOverlap * w.tagWeight;
-  const decay = w.decayRate === 0 ? 1 : Math.exp(-w.decayRate * daysSinceUpdate);
-  const rawBoost = 1 + Math.log2(1 + accessCount);
+  // Clamp decay to prevent underflow for very old entities (floor at 1% relevance)
+  const decay = w.decayRate === 0 ? 1 : Math.max(0.01, Math.exp(-w.decayRate * daysSinceUpdate));
+  // Fix: log2(2 + count) ensures first access (count=1) already provides a boost
+  // count=0 → 1.0, count=1 → 1.58, count=10 → 3.58, capped at maxAccessBoost
+  const rawBoost = Math.log2(2 + accessCount);
   const accessBoost = Math.min(rawBoost, w.maxAccessBoost);
   return relevance * decay * accessBoost;
 }
 
-export function computeTagOverlap(entityTags: string[], queryTags: string[]): number {
+/**
+ * Jaccard similarity between entity tags and query tags.
+ * Normalizes to lowercase and applies stemming for consistency with TF-IDF pipeline.
+ * This ensures 'running' matches 'run', 'configurations' matches 'configuration', etc.
+ */
+export function computeTagOverlap(entityTags: string[], queryTags: string[], stemFn?: (w: string) => string): number {
   if (queryTags.length === 0 || entityTags.length === 0) return 0;
-  // Normalize both sides to lowercase for case-insensitive matching.
-  // Exact matches are checked first; if a tag didn't match exactly,
-  // we don't stem here because tags are short labels that should match as-is.
-  const querySet = new Set(queryTags.map(t => t.toLowerCase()));
-  const normalized = entityTags.map(t => t.toLowerCase());
+  const normalize = stemFn
+    ? (t: string) => stemFn(t.toLowerCase())
+    : (t: string) => t.toLowerCase();
+  const querySet = new Set(queryTags.map(normalize));
+  const normalized = entityTags.map(normalize);
   const matches = normalized.filter(t => querySet.has(t)).length;
-  const union = new Set([...normalized, ...queryTags.map(t => t.toLowerCase())]).size;
+  const union = new Set([...normalized, ...querySet]).size;
   return matches / union;
 }
 

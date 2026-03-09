@@ -54,6 +54,8 @@ Entities are scoped by `type + agentId + userId`. Scope strings use colon separa
 
 Lookup index filenames use `encodeURIComponent` because `:` is invalid on Windows.
 
+**Scope encoding (v2.11.0)**: TF-IDF cache filenames encode each scope segment with `encodeURIComponent` AND additionally replace `_` → `%5F`. This prevents collisions when underscores appear in different segment positions (e.g., `agent_1:user` vs `agent:1_user`). Legacy fallbacks support v2.10.x and pre-v2.10 formats for seamless migration.
+
 ### Search pipeline
 
 Query → synonym expansion (`query-expander.ts`) → tokenize + stopwords → Porter stem → TF-IDF rank → composite score (TF-IDF weight + Jaccard tag overlap + time decay + capped access boost).
@@ -68,6 +70,9 @@ Query → synonym expansion (`query-expander.ts`) → tokenize + stopwords → P
 - **Tag scoring normalization**: `computeTagOverlap()` normalizes to lowercase. Do NOT compare raw entity tags against query tags without normalization.
 - **Skills dedup in mining**: Mining uses `saveOrUpdate()` for both memories and skills. Do NOT use plain `save()` for skills in the mining pipeline — it creates duplicates.
 - **CLI `--base-url`**: The `mine` and `consolidate` commands accept `--base-url` for custom AI endpoints. `OpenAiProvider` also reads `OPENAI_BASE_URL` env var.
+- **Content size limit**: `StorageEngine.validateEntity()` checks `Buffer.byteLength(content, 'utf8')` against `MAX_CONTENT_SIZE` (1 MB). Prevents DoS via oversized entities. Applied to all entity types on save.
+- **Bounded scans**: `listConversations()` uses `MAX_SCAN = 5000` to cap session scanning. `listEntitiesByPrefix()` accepts `maxResults` (default 10,000). `getByUserAcrossAgents()` accepts `limit` (default 50) with early break. Do NOT remove these caps — they prevent OOM on large datasets.
+- **Knowledge dedup source check**: `saveOrUpdate()` on knowledge filters candidates by matching `source` field. Two knowledge entries with different sources will not be considered duplicates even if content is similar.
 
 ### Key conventions
 

@@ -32,6 +32,8 @@ function send(msg: JsonRpcResponse): void {
 }
 
 let buffer = '';
+const MAX_BUFFER_SIZE = 10 * 1024 * 1024; // 10 MB — prevents OOM from malicious clients
+const MAX_MESSAGE_SIZE = 5 * 1024 * 1024; // 5 MB — max single JSON-RPC message
 
 async function processBuffer(): Promise<void> {
   while (true) {
@@ -46,6 +48,11 @@ async function processBuffer(): Promise<void> {
     }
 
     const contentLength = parseInt(match[1], 10);
+    if (contentLength > MAX_MESSAGE_SIZE) {
+      buffer = buffer.slice(headerEnd + 4 + contentLength);
+      send({ jsonrpc: '2.0', id: null, error: { code: -32600, message: `Message too large: ${contentLength} bytes (max ${MAX_MESSAGE_SIZE})` } });
+      continue;
+    }
     const bodyStart = headerEnd + 4;
 
     if (buffer.length < bodyStart + contentLength) return;
@@ -66,6 +73,11 @@ async function processBuffer(): Promise<void> {
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', (chunk: string) => {
   buffer += chunk;
+  if (buffer.length > MAX_BUFFER_SIZE) {
+    send({ jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Buffer overflow: too much unprocessed data' } });
+    buffer = '';
+    return;
+  }
   processBuffer();
 });
 

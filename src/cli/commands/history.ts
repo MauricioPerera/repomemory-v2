@@ -10,10 +10,14 @@ export function cmdHistory(args: ParsedArgs): void {
 
   const mem = new RepoMemory({ dir });
 
-  try {
-    const history = mem.memories.history(entityId);
-    printJson(history);
-  } catch {
-    printError(`Entity not found: ${entityId}`);
+  // Try all collections — entity ID prefix tells us the type, but try all as fallback
+  const collections = [mem.memories, mem.skills, mem.knowledge, mem.sessions, mem.profiles];
+  for (const col of collections) {
+    try {
+      const history = col.history(entityId);
+      printJson(history);
+      return;
+    } catch { /* not in this collection, try next */ }
   }
+  printError(`Entity not found: ${entityId}`);
 }

@@ -6,6 +6,9 @@ import { atomicWriteFileSync } from '../storage/atomic-write.js';
 import type { Entity } from '../types/entities.js';
 import type { TfIdfSerialized } from './tfidf.js';
 
+/** Maximum number of TF-IDF indices to keep loaded in memory. LRU eviction when exceeded. */
+const MAX_LOADED_INDICES = 100;
+
 export class SearchEngine {
   private indices = new Map<string, TfIdfIndex>();
   private dirty = new Set<string>();
@@ -74,14 +77,48 @@ export class SearchEngine {
   }
 
   private getIndex(scope: string): TfIdfIndex {
-    if (this.indices.has(scope)) return this.indices.get(scope)!;
+    if (this.indices.has(scope)) {
+      // Move to end for LRU ordering (most recently used = last)
+      const idx = this.indices.get(scope)!;
+      this.indices.delete(scope);
+      this.indices.set(scope, idx);
+      return idx;
+    }
     const cachePath = this.cachePath(scope);
     let index: TfIdfIndex;
     if (existsSync(cachePath)) {
       const data = safeJsonParse<TfIdfSerialized>(readFileSync(cachePath, 'utf8'));
       index = TfIdfIndex.deserialize(data);
     } else {
-      index = new TfIdfIndex();
+      // Fallback: try legacy cache paths from older versions
+      // v2.10.x: encodeURIComponent per segment joined with _ (but didn't encode _)
+      const v210Name = scope.split(':').map(s => encodeURIComponent(s)).join('_');
+      const v210Path = join(this.cacheDir, `${v210Name}.json`);
+      // pre-v2.10: simple colon→underscore replacement
+      const prePath = join(this.cacheDir, `${scope.replace(/:/g, '_')}.json`);
+
+      const legacyPath = (v210Path !== cachePath && existsSync(v210Path)) ? v210Path
+        : (prePath !== cachePath && existsSync(prePath)) ? prePath
+        : null;
+
+      if (legacyPath) {
+        const data = safeJsonParse<TfIdfSerialized>(readFileSync(legacyPath, 'utf8'));
+        index = TfIdfIndex.deserialize(data);
+        this.dirty.add(scope); // re-persist under new path
+      } else {
+        index = new TfIdfIndex();
+      }
+    }
+    // Evict least recently used indices when over capacity
+    while (this.indices.size >= MAX_LOADED_INDICES) {
+      const oldest = this.indices.keys().next().value;
+      if (oldest === undefined) break;
+      // Persist before evicting if dirty
+      if (this.dirty.has(oldest)) {
+        this.persistIndex(oldest);
+        this.dirty.delete(oldest);
+      }
+      this.indices.delete(oldest);
     }
     this.indices.set(scope, index);
     return index;
@@ -95,7 +132,15 @@ export class SearchEngine {
   }
 
   private cachePath(scope: string): string {
-    return join(this.cacheDir, `${scope.replace(/:/g, '_')}.json`);
+    // Encode each segment separately to prevent collisions.
+    // encodeURIComponent does NOT encode underscore (_), so we must
+    // also replace _ → %5F to make _ a safe join separator.
+    // e.g., "memories:agent_1:user" → "memories_agent%5F1_user"
+    //        "memories:agent:1_user" → "memories_agent_1%5Fuser"  (different!)
+    const safeName = scope.split(':').map(s =>
+      encodeURIComponent(s).replace(/_/g, '%5F'),
+    ).join('_');
+    return join(this.cacheDir, `${safeName}.json`);
   }
 
   private extractText(entity: Entity): string {

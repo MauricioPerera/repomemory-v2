@@ -34,10 +34,20 @@ export class SessionCollection extends BaseCollection<Session> {
     return all.filter(s => s.conversationId === conversationId);
   }
 
-  listConversations(agentId: string, userId: string): Array<{ conversationId: string; count: number; latest: string }> {
-    const all = this.list(agentId, userId);
+  listConversations(
+    agentId: string,
+    userId: string,
+    options?: { limit?: number; offset?: number },
+  ): { items: Array<{ conversationId: string; count: number; latest: string }>; total: number; hasMore: boolean } {
+    const limit = options?.limit ?? 50;
+    const offset = options?.offset ?? 0;
+    // Use paginated listing to avoid loading all sessions when possible.
+    // We must scan enough sessions to build complete conversation groups,
+    // so we use a bounded scan (max 5000 sessions) to prevent OOM.
+    const MAX_SCAN = 5000;
+    const { items: sessions } = this.listPaginated(agentId, userId, { limit: MAX_SCAN, offset: 0 });
     const groups = new Map<string, { count: number; latest: string }>();
-    for (const s of all) {
+    for (const s of sessions) {
       if (!s.conversationId) continue;
       const existing = groups.get(s.conversationId);
       if (existing) {
@@ -47,9 +57,12 @@ export class SessionCollection extends BaseCollection<Session> {
         groups.set(s.conversationId, { count: 1, latest: s.updatedAt });
       }
     }
-    return Array.from(groups.entries())
+    const sorted = Array.from(groups.entries())
       .map(([conversationId, { count, latest }]) => ({ conversationId, count, latest }))
       .sort((a, b) => b.latest.localeCompare(a.latest));
+    const total = sorted.length;
+    const items = sorted.slice(offset, offset + limit);
+    return { items, total, hasMore: offset + limit < total };
   }
 
   protected searchScope(agentId: string, userId?: string): string {

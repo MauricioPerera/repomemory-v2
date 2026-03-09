@@ -2,6 +2,11 @@
  * Porter Stemmer — lightweight English stemmer (zero dependencies).
  * Based on the original Porter 1980 algorithm.
  * Reduces words to their root form: "running" → "run", "configurations" → "configur"
+ *
+ * Performance optimizations:
+ * - consonant() uses O(1) lookup instead of O(N) recursion
+ * - Suffix lists pre-sorted longest-first for correct greedy matching
+ * - Memoization cache (10K entries) avoids re-stemming identical words
  */
 
 const step2Map: Record<string, string> = {
@@ -17,10 +22,23 @@ const step3Map: Record<string, string> = {
   ical: 'ic', ful: '', ness: '',
 };
 
+// Pre-sorted longest-first for greedy suffix matching
+const step2Sorted = Object.entries(step2Map).sort((a, b) => b[0].length - a[0].length);
+const step3Sorted = Object.entries(step3Map).sort((a, b) => b[0].length - a[0].length);
+const step4Suffixes = [
+  'ement', 'ance', 'ence', 'able', 'ible', 'ment', 'ism',
+  'ate', 'iti', 'ous', 'ive', 'ize', 'ant', 'ent', 'ion',
+  'al', 'er', 'ic', 'ou',
+];
+
+const VOWELS = new Set(['a', 'e', 'i', 'o', 'u']);
+
+/** O(1) consonant check — 'y' is consonant at word start or after a vowel */
 function consonant(word: string, i: number): boolean {
+  if (i < 0 || i >= word.length) return false;
   const ch = word[i];
-  if (ch === 'a' || ch === 'e' || ch === 'i' || ch === 'o' || ch === 'u') return false;
-  if (ch === 'y') return i === 0 || !consonant(word, i - 1);
+  if (VOWELS.has(ch)) return false;
+  if (ch === 'y') return i === 0 || VOWELS.has(word[i - 1]);
   return true;
 }
 
@@ -59,8 +77,16 @@ function cvc(word: string): boolean {
     && word[len - 1] !== 'w' && word[len - 1] !== 'x' && word[len - 1] !== 'y';
 }
 
+// Bounded memoization cache — prevents unbounded memory growth
+const STEM_CACHE_MAX = 10_000;
+const stemCache = new Map<string, string>();
+
 export function stem(word: string): string {
   if (word.length < 3) return word;
+
+  const cached = stemCache.get(word);
+  if (cached !== undefined) return cached;
+
   let w = word.toLowerCase();
 
   // Step 1a
@@ -95,39 +121,32 @@ export function stem(word: string): string {
     w = w.slice(0, -1) + 'i';
   }
 
-  // Step 2
-  for (const [suffix, replacement] of Object.entries(step2Map)) {
+  // Step 2 (sorted longest-suffix-first for greedy matching)
+  for (const [suffix, replacement] of step2Sorted) {
     if (w.endsWith(suffix)) {
-      const stem = w.slice(0, -suffix.length);
-      if (measure(stem) > 0) w = stem + replacement;
+      const s = w.slice(0, -suffix.length);
+      if (measure(s) > 0) w = s + replacement;
       break;
     }
   }
 
-  // Step 3
-  for (const [suffix, replacement] of Object.entries(step3Map)) {
+  // Step 3 (sorted longest-suffix-first)
+  for (const [suffix, replacement] of step3Sorted) {
     if (w.endsWith(suffix)) {
-      const stem = w.slice(0, -suffix.length);
-      if (measure(stem) > 0) w = stem + replacement;
+      const s = w.slice(0, -suffix.length);
+      if (measure(s) > 0) w = s + replacement;
       break;
     }
   }
 
-  // Step 4
-  const step4Suffixes = [
-    'al', 'ance', 'ence', 'er', 'ic', 'able', 'ible', 'ant',
-    'ement', 'ment', 'ent', 'ion', 'ou', 'ism', 'ate', 'iti',
-    'ous', 'ive', 'ize',
-  ];
+  // Step 4 (sorted longest-suffix-first)
   for (const suffix of step4Suffixes) {
     if (w.endsWith(suffix)) {
-      const stem = w.slice(0, -suffix.length);
+      const s = w.slice(0, -suffix.length);
       if (suffix === 'ion') {
-        if (measure(stem) > 1 && (stem.endsWith('s') || stem.endsWith('t'))) {
-          w = stem;
-        }
-      } else if (measure(stem) > 1) {
-        w = stem;
+        if (measure(s) > 1 && (s.endsWith('s') || s.endsWith('t'))) w = s;
+      } else if (measure(s) > 1) {
+        w = s;
       }
       break;
     }
@@ -135,16 +154,21 @@ export function stem(word: string): string {
 
   // Step 5a
   if (w.endsWith('e')) {
-    const stem = w.slice(0, -1);
-    if (measure(stem) > 1 || (measure(stem) === 1 && !cvc(stem))) {
-      w = stem;
-    }
+    const s = w.slice(0, -1);
+    if (measure(s) > 1 || (measure(s) === 1 && !cvc(s))) w = s;
   }
 
   // Step 5b
   if (measure(w) > 1 && endsWithDouble(w) && w.endsWith('l')) {
     w = w.slice(0, -1);
   }
+
+  // Cache result (evict oldest if full)
+  if (stemCache.size >= STEM_CACHE_MAX) {
+    const firstKey = stemCache.keys().next().value;
+    if (firstKey !== undefined) stemCache.delete(firstKey);
+  }
+  stemCache.set(word, w);
 
   return w;
 }

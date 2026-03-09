@@ -38,9 +38,11 @@ export class KnowledgeCollection extends BaseCollection<Knowledge> {
     dedupThreshold = 0.2,
   ): [Knowledge, CommitInfo, { deduplicated: boolean }] {
     const content = input.content as string;
+    const source = input.source as string | undefined;
     const candidates = this.find(agentId, undefined, content, 5);
     for (const { entity, score } of candidates) {
-      if (score >= dedupThreshold) {
+      // Require same source (or both undefined) to prevent merging unrelated knowledge
+      if (score >= dedupThreshold && entity.source === source) {
         const [updated, commit] = this.update(entity.id, {
           content,
           tags: (input.tags as string[]) ?? entity.tags,

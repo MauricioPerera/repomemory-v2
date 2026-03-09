@@ -33,6 +33,9 @@ RepoMemory provides persistent, versioned memory for AI agents. Every change is 
 - **Auto-mining** — automatically extract memories/skills/profile when sessions are saved (`autoMine` config)
 - **Compact prompts** — configurable prompt strategy optimized for small reasoning models (<3B params)
 - **Library + CLI + MCP + HTTP** — import as a TypeScript library, use from the command line, or connect via MCP/HTTP
+- **Content size limit** — 1 MB max per entity content, enforced via `Buffer.byteLength` to prevent DoS
+- **Input validation** — entity/agent/user IDs validated against path traversal (`/`, `\`, `..`, `:`, `\0`)
+- **Bounded queries** — paginated `listConversations()`, capped `getByUserAcrossAgents()`, bounded `listEntitiesByPrefix()`
 - **Cross-platform** — works on Windows, macOS, and Linux
 
 ## Install
@@ -247,9 +250,9 @@ mem.sessions.markMined('session-id');
 // List sessions by conversation
 mem.sessions.listByConversation('agent-1', 'user-1', 'conv-abc');
 
-// List all conversations (grouped summary)
-mem.sessions.listConversations('agent-1', 'user-1');
-// [{ conversationId: 'conv-abc', count: 3, latest: '2024-01-03T...' }, ...]
+// List all conversations (paginated grouped summary)
+const convos = mem.sessions.listConversations('agent-1', 'user-1', { limit: 20, offset: 0 });
+// { items: [{ conversationId: 'conv-abc', count: 3, latest: '2024-01-03T...' }], total: 5, hasMore: false }
 ```
 
 ##### `mem.profiles`
@@ -262,8 +265,9 @@ mem.profiles.save('agent-1', 'user-1', {
 
 mem.profiles.getByUser('agent-1', 'user-1');
 
-// Get all profiles for a user across every agent (sorted by updatedAt)
+// Get all profiles for a user across every agent (sorted by updatedAt, default limit: 50)
 mem.profiles.getByUserAcrossAgents('user-1');
+mem.profiles.getByUserAcrossAgents('user-1', 10);  // custom limit
 
 // Save/get a shared profile (agentId = _shared)
 mem.profiles.saveShared('user-1', { content: 'Global user preferences' });
@@ -780,8 +784,41 @@ The TF-IDF index is cached to disk and updated incrementally — no full rebuild
 | Eager LookupIndex loading | All scopes loaded into memory on `init()` for O(1) `findById()` — eliminates O(n) fallback scan across scope files |
 | IDF pre-computation on deserialize | `recomputeIdf()` called when TF-IDF index is loaded from disk — avoids marking index dirty and redundant recomputation on first search |
 | Shared scoping utility | `src/scoping.ts` centralizes scope/ref-path construction — eliminates 4x duplication across engine, portability, and collections |
+| Underscore encoding in scope cache | `_` is URI-safe so `encodeURIComponent` preserves it — breaks segment boundaries when used as join separator. Manual `%5F` encoding fixes collisions |
+| 1 MB content limit | Prevents DoS via oversized entities without rejecting legitimate large content (code files, long docs) |
+| Bounded scans with configurable limits | `MAX_SCAN=5000` in listConversations, `maxResults=10000` in prefix scan, `limit=50` in cross-agent profiles — prevents OOM without sacrificing normal-use coverage |
+| Input ID validation | Rejects `/`, `\`, `:`, `\0`, `..` in entity/agent/user IDs — prevents path traversal via crafted IDs stored as ref paths |
 
 ## Changelog
+
+### v2.11.0
+
+**Scalability & Security Hardening**
+
+- **Scope encoding collision fix**: TF-IDF cache filenames now encode underscores (`_` → `%5F`) within scope segments before joining with `_` separator. Prevents collisions when underscores appear at different positions across segments (e.g., `agent_1:user` vs `agent:1_user`). Includes 3-level legacy fallback (v2.11+ → v2.10.x → pre-v2.10) for seamless migration.
+- **Content size limit (1 MB)**: `StorageEngine.validateEntity()` rejects content exceeding 1 MB (`Buffer.byteLength` in UTF-8). Prevents DoS via oversized entities. Applied to all entity types on save.
+- **`listConversations()` pagination**: Returns `{ items, total, hasMore }` instead of a flat array. Accepts `{ limit?, offset? }` options. Bounded scan (max 5,000 sessions) prevents OOM on large datasets.
+- **`getByUserAcrossAgents()` limit**: Accepts `limit` parameter (default 50) with early break at `limit * 2` candidates. Prevents scanning all profiles in the system.
+- **`listEntitiesByPrefix()` bounded scan**: Accepts `maxResults` parameter (default 10,000). Stops scanning once the limit is reached.
+
+**Tests**
+- Added 14 new tests: scope encoding collision (2), content size limits (4), conversation pagination (3), profile cross-agent limits (3), prefix scan bounds (2). Total: ~345 tests across 30 files.
+
+### v2.10.0
+
+**Security & Data Integrity**
+
+- **Path traversal prevention**: Entity IDs, agent IDs, and user IDs are validated against illegal characters (`/`, `\`, `:`, `\0`, `..`). Prevents filesystem escape via crafted IDs.
+- **Snapshot restore lock**: `restore()` is wrapped in `withLock()` to prevent concurrent restores from corrupting storage.
+- **History depth limit**: `commits.history()` has a max depth of 10,000 to prevent infinite loops on corrupted commit chains.
+- **Scope encoding per segment**: Search engine encodes each scope segment with `encodeURIComponent` separately before joining, fixing issues with special characters in agent/user IDs.
+- **Knowledge dedup source check**: `saveOrUpdate()` on knowledge filters candidates by matching `source` field. Prevents false-positive dedup across different source files.
+- **Snapshot staging validation**: `restore()` validates staged snapshots have required directories before overwriting live data.
+- **HTTP request size limit**: HTTP API limits request body to 1 MB to prevent memory exhaustion from oversized payloads.
+- **LookupIndex rebuild**: New `rebuildLookupIndex()` method recovers from lookup/ref desynchronization caused by crashes mid-write.
+
+**Tests**
+- Added security tests (path traversal, restore locks, history depth) and fix validation tests. Total: ~331 tests across 29 files.
 
 ### v2.5.1
 
@@ -907,7 +944,7 @@ npm run build        # Build ESM + .d.ts + sourcemaps (tsup)
 
 ### Running Tests
 
-Tests use temporary directories and clean up after themselves. ~284 tests across 27 files:
+Tests use temporary directories and clean up after themselves. ~345 tests across 30 files:
 
 - **Unit tests**: tokenizer, TF-IDF, scoring, JSON serialization, CLI parser
 - **Storage tests**: object store, commit store, ref store, engine, snapshots
@@ -917,6 +954,8 @@ Tests use temporary directories and clean up after themselves. ~284 tests across
 - **v2.3 search tests**: Porter stemmer, query expansion, configurable scoring weights, access boost cap, score-based recall budget, index diagnostics
 - **v2.4 gap tests**: saveOrUpdate for skills/knowledge, pagination, count, deleteMany, event emission on bulk ops
 - **v2.5 feature tests**: MCP handler, auto-mining, portability (13), middleware (15), CLI commands (8), HTTP API (11)
+- **v2.10 security tests**: path traversal prevention, restore locks, history depth limits, scope encoding, knowledge dedup source check, snapshot validation, HTTP size limits
+- **v2.11 scalability tests**: scope encoding collision prevention (2), content size limits (4), conversation pagination (3), profile cross-agent limits (3), prefix scan bounds (2)
 - **Benchmarks**: save/saveMany throughput, search latency
 
 ```bash

@@ -3,6 +3,12 @@ import { join } from 'node:path';
 import { safeJsonParse, safeJsonStringify } from '../serialization/json.js';
 import { atomicWriteFileSync } from './atomic-write.js';
 
+/** Maximum number of scope-level maps to keep loaded. LRU eviction when exceeded. */
+const MAX_LOADED_SCOPES = 200;
+
+/** Maximum entries in globalIndex cache. Falls back to disk scan on miss. */
+const MAX_GLOBAL_ENTRIES = 50_000;
+
 export class LookupIndex {
   private readonly dir: string;
   private indices = new Map<string, Map<string, string>>();
@@ -59,11 +65,30 @@ export class LookupIndex {
   }
 
   findById(entityId: string): string | undefined {
-    return this.globalIndex.get(entityId);
+    const cached = this.globalIndex.get(entityId);
+    if (cached !== undefined) {
+      // LRU touch: move to end
+      this.globalIndex.delete(entityId);
+      this.globalIndex.set(entityId, cached);
+      return cached;
+    }
+    // Cache miss — fallback: scan scope files on disk
+    for (const scope of this.listScopeFiles()) {
+      const map = this.getScope(scope);
+      const ref = map.get(entityId);
+      if (ref !== undefined) return ref; // getScope() already populates globalIndex
+    }
+    return undefined;
   }
 
   private getScope(scope: string): Map<string, string> {
-    if (this.indices.has(scope)) return this.indices.get(scope)!;
+    if (this.indices.has(scope)) {
+      // Move to end for LRU ordering
+      const existing = this.indices.get(scope)!;
+      this.indices.delete(scope);
+      this.indices.set(scope, existing);
+      return existing;
+    }
     const path = this.scopePath(scope);
     let map: Map<string, string>;
     if (existsSync(path)) {
@@ -72,9 +97,22 @@ export class LookupIndex {
     } else {
       map = new Map();
     }
+    // Evict least recently used scope maps when over capacity
+    // Note: globalIndex is NOT evicted — it stays complete for O(1) findById()
+    while (this.indices.size >= MAX_LOADED_SCOPES) {
+      const oldest = this.indices.keys().next().value;
+      if (oldest === undefined) break;
+      this.indices.delete(oldest);
+    }
     this.indices.set(scope, map);
     for (const [id, ref] of map) {
       this.globalIndex.set(id, ref);
+    }
+    // Evict oldest globalIndex entries when over capacity
+    while (this.globalIndex.size > MAX_GLOBAL_ENTRIES) {
+      const oldest = this.globalIndex.keys().next().value;
+      if (oldest === undefined) break;
+      this.globalIndex.delete(oldest);
     }
     return map;
   }

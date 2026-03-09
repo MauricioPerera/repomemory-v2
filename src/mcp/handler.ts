@@ -5,6 +5,7 @@
 
 import type { RepoMemory } from '../index.js';
 import type { RecallOptions } from '../types/results.js';
+import { RepoMemoryError } from '../types/errors.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -349,6 +350,52 @@ export const tools: ToolDef[] = [
 ];
 
 // ---------------------------------------------------------------------------
+// Input validation helpers
+// ---------------------------------------------------------------------------
+
+function requireString(args: Record<string, unknown>, key: string): string {
+  const val = args[key];
+  if (typeof val !== 'string' || val.length === 0) {
+    throw new Error(`Missing or invalid required parameter: ${key} (expected non-empty string)`);
+  }
+  return val;
+}
+
+function optionalString(args: Record<string, unknown>, key: string): string | undefined {
+  const val = args[key];
+  if (val == null) return undefined;
+  if (typeof val !== 'string') throw new Error(`Invalid parameter: ${key} (expected string)`);
+  return val;
+}
+
+function optionalNumber(args: Record<string, unknown>, key: string): number | undefined {
+  const val = args[key];
+  if (val == null) return undefined;
+  const n = typeof val === 'number' ? val : Number(val);
+  if (Number.isNaN(n)) throw new Error(`Invalid parameter: ${key} (expected number)`);
+  return n;
+}
+
+function optionalBoolean(args: Record<string, unknown>, key: string): boolean | undefined {
+  const val = args[key];
+  if (val == null) return undefined;
+  if (typeof val === 'boolean') return val;
+  if (val === 'true') return true;
+  if (val === 'false') return false;
+  throw new Error(`Invalid parameter: ${key} (expected boolean)`);
+}
+
+function optionalStringArray(args: Record<string, unknown>, key: string): string[] | undefined {
+  const val = args[key];
+  if (val == null) return undefined;
+  if (!Array.isArray(val)) throw new Error(`Invalid parameter: ${key} (expected array)`);
+  return val.map((v, i) => {
+    if (typeof v !== 'string') throw new Error(`Invalid parameter: ${key}[${i}] (expected string)`);
+    return v;
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Tool dispatch
 // ---------------------------------------------------------------------------
 
@@ -359,7 +406,7 @@ function collectionFor(mem: RepoMemory, type: string) {
     case 'knowledge': return mem.knowledge;
     case 'session': return mem.sessions;
     case 'profile': return mem.profiles;
-    default: throw new Error(`Unknown entity type: ${type}`);
+    default: throw new RepoMemoryError('INVALID_INPUT', `Unknown entity type: ${type}`);
   }
 }
 
@@ -367,113 +414,118 @@ export async function handleTool(mem: RepoMemory, name: string, args: Record<str
   switch (name) {
     // Memories
     case 'memory_save': {
-      const [entity, commit] = mem.memories.save(args.agentId as string, args.userId as string, {
-        content: args.content,
-        tags: args.tags,
-        category: args.category,
+      const [entity, commit] = mem.memories.save(requireString(args, 'agentId'), requireString(args, 'userId'), {
+        content: requireString(args, 'content'),
+        tags: optionalStringArray(args, 'tags'),
+        category: optionalString(args, 'category'),
       });
       return { entity, commit };
     }
     case 'memory_search': {
-      return mem.memories.search(args.agentId as string, args.userId as string, args.query as string, (args.limit as number) ?? 10);
+      return mem.memories.search(requireString(args, 'agentId'), requireString(args, 'userId'), requireString(args, 'query'), optionalNumber(args, 'limit') ?? 10);
     }
     case 'memory_save_or_update': {
-      const [entity, commit, meta] = mem.memories.saveOrUpdate(args.agentId as string, args.userId as string, {
-        content: args.content,
-        tags: args.tags,
-        category: args.category,
+      const [entity, commit, meta] = mem.memories.saveOrUpdate(requireString(args, 'agentId'), requireString(args, 'userId'), {
+        content: requireString(args, 'content'),
+        tags: optionalStringArray(args, 'tags'),
+        category: optionalString(args, 'category'),
       });
       return { entity, commit, deduplicated: meta.deduplicated };
     }
     case 'memory_list': {
-      return mem.memories.listPaginated(args.agentId as string, args.userId as string, {
-        limit: args.limit as number,
-        offset: args.offset as number,
+      return mem.memories.listPaginated(requireString(args, 'agentId'), requireString(args, 'userId'), {
+        limit: optionalNumber(args, 'limit'),
+        offset: optionalNumber(args, 'offset'),
       });
     }
 
     // Skills
     case 'skill_save': {
-      const [entity, commit] = mem.skills.save(args.agentId as string, undefined, {
-        content: args.content,
-        tags: args.tags,
-        category: args.category,
-        status: args.status,
+      const [entity, commit] = mem.skills.save(requireString(args, 'agentId'), undefined, {
+        content: requireString(args, 'content'),
+        tags: optionalStringArray(args, 'tags'),
+        category: optionalString(args, 'category'),
+        status: optionalString(args, 'status'),
       });
       return { entity, commit };
     }
     case 'skill_search': {
-      return mem.skills.search(args.agentId as string, args.query as string, (args.limit as number) ?? 10, (args.includeShared as boolean) ?? false);
+      return mem.skills.search(requireString(args, 'agentId'), requireString(args, 'query'), optionalNumber(args, 'limit') ?? 10, optionalBoolean(args, 'includeShared') ?? false);
     }
     case 'skill_save_or_update': {
-      const [entity, commit, meta] = mem.skills.saveOrUpdate(args.agentId as string, {
-        content: args.content,
-        tags: args.tags,
-        category: args.category,
-        status: args.status,
+      const [entity, commit, meta] = mem.skills.saveOrUpdate(requireString(args, 'agentId'), {
+        content: requireString(args, 'content'),
+        tags: optionalStringArray(args, 'tags'),
+        category: optionalString(args, 'category'),
+        status: optionalString(args, 'status'),
       });
       return { entity, commit, deduplicated: meta.deduplicated };
     }
 
     // Knowledge
     case 'knowledge_save': {
-      const [entity, commit] = mem.knowledge.save(args.agentId as string, undefined, {
-        content: args.content,
-        tags: args.tags,
-        source: args.source,
-        version: args.version,
-        questions: args.questions,
+      const [entity, commit] = mem.knowledge.save(requireString(args, 'agentId'), undefined, {
+        content: requireString(args, 'content'),
+        tags: optionalStringArray(args, 'tags'),
+        source: optionalString(args, 'source'),
+        version: optionalString(args, 'version'),
+        questions: optionalStringArray(args, 'questions'),
       });
       return { entity, commit };
     }
     case 'knowledge_search': {
-      return mem.knowledge.search(args.agentId as string, args.query as string, (args.limit as number) ?? 10, (args.includeShared as boolean) ?? false);
+      return mem.knowledge.search(requireString(args, 'agentId'), requireString(args, 'query'), optionalNumber(args, 'limit') ?? 10, optionalBoolean(args, 'includeShared') ?? false);
     }
     case 'knowledge_save_or_update': {
-      const [entity, commit, meta] = mem.knowledge.saveOrUpdate(args.agentId as string, {
-        content: args.content,
-        tags: args.tags,
-        source: args.source,
-        version: args.version,
-        questions: args.questions,
+      const [entity, commit, meta] = mem.knowledge.saveOrUpdate(requireString(args, 'agentId'), {
+        content: requireString(args, 'content'),
+        tags: optionalStringArray(args, 'tags'),
+        source: optionalString(args, 'source'),
+        version: optionalString(args, 'version'),
+        questions: optionalStringArray(args, 'questions'),
       });
       return { entity, commit, deduplicated: meta.deduplicated };
     }
 
     // Sessions
     case 'session_save': {
-      const [entity, commit] = mem.sessions.save(args.agentId as string, args.userId as string, {
-        content: args.content,
+      const [entity, commit] = mem.sessions.save(requireString(args, 'agentId'), requireString(args, 'userId'), {
+        content: requireString(args, 'content'),
         messages: args.messages,
-        conversationId: args.conversationId,
+        conversationId: optionalString(args, 'conversationId'),
       });
       return { entity, commit };
     }
     case 'session_list': {
-      return mem.sessions.list(args.agentId as string, args.userId as string);
+      return mem.sessions.list(requireString(args, 'agentId'), requireString(args, 'userId'));
     }
 
     // Profiles
     case 'profile_save': {
-      const [entity, commit] = mem.profiles.save(args.agentId as string, args.userId as string, {
-        content: args.content,
+      const [entity, commit] = mem.profiles.save(requireString(args, 'agentId'), requireString(args, 'userId'), {
+        content: requireString(args, 'content'),
         metadata: args.metadata,
       });
       return { entity, commit };
     }
     case 'profile_get': {
-      return mem.profiles.getByUser(args.agentId as string, args.userId as string);
+      return mem.profiles.getByUser(requireString(args, 'agentId'), requireString(args, 'userId'));
     }
 
     // Cross-cutting
     case 'recall': {
       const opts: RecallOptions = {};
-      if (args.maxItems != null) opts.maxItems = args.maxItems as number;
-      if (args.maxChars != null) opts.maxChars = args.maxChars as number;
-      if (args.includeSharedSkills != null) opts.includeSharedSkills = args.includeSharedSkills as boolean;
-      if (args.includeSharedKnowledge != null) opts.includeSharedKnowledge = args.includeSharedKnowledge as boolean;
-      if (args.includeProfile != null) opts.includeProfile = args.includeProfile as boolean;
-      const ctx = mem.recall(args.agentId as string, args.userId as string, args.query as string, opts);
+      const maxItems = optionalNumber(args, 'maxItems');
+      const maxChars = optionalNumber(args, 'maxChars');
+      if (maxItems != null) opts.maxItems = maxItems;
+      if (maxChars != null) opts.maxChars = maxChars;
+      const inclSkills = optionalBoolean(args, 'includeSharedSkills');
+      const inclKnowledge = optionalBoolean(args, 'includeSharedKnowledge');
+      const inclProfile = optionalBoolean(args, 'includeProfile');
+      if (inclSkills != null) opts.includeSharedSkills = inclSkills;
+      if (inclKnowledge != null) opts.includeSharedKnowledge = inclKnowledge;
+      if (inclProfile != null) opts.includeProfile = inclProfile;
+      const ctx = mem.recall(requireString(args, 'agentId'), requireString(args, 'userId'), requireString(args, 'query'), opts);
       return {
         formatted: ctx.formatted,
         totalItems: ctx.totalItems,
@@ -482,19 +534,19 @@ export async function handleTool(mem: RepoMemory, name: string, args: Record<str
       };
     }
     case 'entity_get': {
-      const col = collectionFor(mem, args.type as string);
-      return col.get(args.entityId as string);
+      const col = collectionFor(mem, requireString(args, 'type'));
+      return col.get(requireString(args, 'entityId'));
     }
     case 'entity_delete': {
-      const col = collectionFor(mem, args.type as string);
-      return col.delete(args.entityId as string);
+      const col = collectionFor(mem, requireString(args, 'type'));
+      return col.delete(requireString(args, 'entityId'));
     }
     case 'entity_history': {
-      const col = collectionFor(mem, args.type as string);
-      return col.history(args.entityId as string);
+      const col = collectionFor(mem, requireString(args, 'type'));
+      return col.history(requireString(args, 'entityId'));
     }
     case 'mine': {
-      return await mem.mine(args.sessionId as string);
+      return await mem.mine(requireString(args, 'sessionId'));
     }
     case 'stats': {
       return mem.stats();
@@ -506,12 +558,15 @@ export async function handleTool(mem: RepoMemory, name: string, args: Record<str
       return mem.export();
     }
     case 'import': {
+      if (!args.data || typeof args.data !== 'object') {
+        throw new Error('Missing or invalid required parameter: data (expected object)');
+      }
       return mem.import(args.data as Parameters<typeof mem.import>[0], {
-        skipExisting: args.skipExisting as boolean,
+        skipExisting: optionalBoolean(args, 'skipExisting'),
       });
     }
     default:
-      throw new Error(`Unknown tool: ${name}`);
+      throw new RepoMemoryError('INVALID_INPUT', `Unknown tool: ${name}`);
   }
 }
 
@@ -521,12 +576,25 @@ export async function handleTool(mem: RepoMemory, name: string, args: Record<str
 
 const SERVER_INFO = {
   name: 'repomemory',
-  version: '2.4.0',
+  version: '2.11.0',
 };
 
 const CAPABILITIES = {
   tools: {},
 };
+
+/** Timeout for tool execution (5 minutes — covers long AI operations like mining) */
+const TOOL_TIMEOUT_MS = 5 * 60 * 1000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    promise.then(
+      (val) => { clearTimeout(timer); resolve(val); },
+      (err) => { clearTimeout(timer); reject(err); },
+    );
+  });
+}
 
 function makeResult(id: string | number | null, result: unknown): JsonRpcResponse {
   return { jsonrpc: '2.0', id, result };
@@ -563,7 +631,11 @@ export async function handleRequest(mem: RepoMemory, req: JsonRpcRequest): Promi
       }
 
       try {
-        const result = await handleTool(mem, toolName, toolArgs);
+        const result = await withTimeout(
+          handleTool(mem, toolName, toolArgs),
+          TOOL_TIMEOUT_MS,
+          `Tool '${toolName}'`,
+        );
         return makeResult(id, {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         });

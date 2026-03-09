@@ -1,4 +1,4 @@
-import type { Entity, Memory, Skill, Knowledge, Session, Profile } from './types/entities.js';
+import type { Entity, EntityType, Memory, Skill, Knowledge, Session, Profile } from './types/entities.js';
 import { scopeFromEntity } from './scoping.js';
 import type { StorageEngine } from './storage/engine.js';
 import type { SearchEngine } from './search/search-engine.js';
@@ -6,6 +6,32 @@ import type { AccessTracker } from './storage/access-tracker.js';
 import { RepoMemoryError } from './types/errors.js';
 
 const EXPORT_VERSION = 1;
+
+const VALID_ENTITY_TYPES: ReadonlySet<EntityType> = new Set(['memory', 'skill', 'knowledge', 'session', 'profile']);
+
+/** Validate minimum required fields for an entity before import */
+function validateEntity(entity: unknown, index: number): entity is Entity {
+  if (!entity || typeof entity !== 'object') {
+    throw new RepoMemoryError('INVALID_INPUT', `Import entity[${index}]: not an object`);
+  }
+  const e = entity as Record<string, unknown>;
+  if (typeof e.id !== 'string' || e.id.length === 0) {
+    throw new RepoMemoryError('INVALID_INPUT', `Import entity[${index}]: missing or invalid id`);
+  }
+  if (typeof e.type !== 'string' || !VALID_ENTITY_TYPES.has(e.type as EntityType)) {
+    throw new RepoMemoryError('INVALID_INPUT', `Import entity[${index}] (${e.id}): invalid type '${e.type}'`);
+  }
+  if (typeof e.content !== 'string') {
+    throw new RepoMemoryError('INVALID_INPUT', `Import entity[${index}] (${e.id}): missing content`);
+  }
+  if (typeof e.createdAt !== 'string') {
+    throw new RepoMemoryError('INVALID_INPUT', `Import entity[${index}] (${e.id}): missing createdAt`);
+  }
+  if (typeof e.updatedAt !== 'string') {
+    throw new RepoMemoryError('INVALID_INPUT', `Import entity[${index}] (${e.id}): missing updatedAt`);
+  }
+  return true;
+}
 
 export interface ExportData {
   version: number;
@@ -109,7 +135,9 @@ export function importData(
     ...(data.entities.profiles ?? []),
   ];
 
-  for (const entity of allEntities) {
+  for (let i = 0; i < allEntities.length; i++) {
+    const entity = allEntities[i];
+    validateEntity(entity, i);
     const existing = storage.load(entity.id);
 
     if (existing) {

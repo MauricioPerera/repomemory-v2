@@ -80,6 +80,22 @@ export class SnapshotManager {
       throw new RepoMemoryError('NOT_FOUND', `Snapshot not found: ${snapshotId}`);
     }
 
+    // Validate snapshot metadata exists and is readable
+    const metaPath = join(snapDir, 'snapshot.json');
+    if (!existsSync(metaPath)) {
+      throw new RepoMemoryError('INVALID_INPUT', `Snapshot ${snapshotId} missing metadata (snapshot.json)`);
+    }
+    try {
+      const meta = safeJsonParse<SnapshotInfo>(readFileSync(metaPath, 'utf8'));
+      if (!meta || !meta.id || !meta.timestamp) {
+        throw new RepoMemoryError('INVALID_INPUT', `Snapshot ${snapshotId} has corrupted metadata`);
+      }
+    } catch (err) {
+      if (err instanceof RepoMemoryError && err.code === 'INVALID_INPUT') throw err;
+      // Wrap PARSE_ERROR and other errors with a descriptive message
+      throw new RepoMemoryError('INVALID_INPUT', `Snapshot ${snapshotId} has corrupted metadata`);
+    }
+
     const subs = ['refs', 'index', 'objects', 'commits'];
 
     // Validate: ensure snapshot has at least some data before destructive restore

@@ -1,4 +1,5 @@
 import { createServer } from 'node:http';
+import { timingSafeEqual } from 'node:crypto';
 import { RepoMemory } from './index.js';
 import { handleTool, tools } from './mcp/handler.js';
 
@@ -63,10 +64,15 @@ const server = createServer(async (req, res) => {
   }
 
   // API key authentication (if configured via --api-key)
+  // Uses timing-safe comparison to prevent timing attacks
   if (apiKey) {
     const authHeader = req.headers.authorization ?? '';
     const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
-    if (token !== apiKey && url !== '/health') {
+    const keyBuf = Buffer.from(apiKey, 'utf8');
+    const tokenBuf = Buffer.from(token, 'utf8');
+    // Constant-time comparison: pad shorter buffer to prevent length leak
+    const isValid = keyBuf.length === tokenBuf.length && timingSafeEqual(keyBuf, tokenBuf);
+    if (!isValid && url !== '/health') {
       jsonResponse(res, 401, { error: 'Unauthorized: invalid or missing API key' });
       return;
     }
@@ -81,7 +87,7 @@ const server = createServer(async (req, res) => {
 
     // GET /health — health check
     if (url === '/health' && req.method === 'GET') {
-      jsonResponse(res, 200, { status: 'ok', dir, version: '2.12.0' });
+      jsonResponse(res, 200, { status: 'ok', dir, version: '2.13.0' });
       return;
     }
 
@@ -129,7 +135,7 @@ const server = createServer(async (req, res) => {
       const userId = params.get('userId') ?? undefined;
       const type = params.get('type') ?? 'memory';
       const rawLimit = params.get('limit') ? Number(params.get('limit')) : 10;
-      const limit = Math.max(1, Math.min(rawLimit || 10, 1000)); // clamp 1-1000
+      const limit = Math.max(1, Math.min(rawLimit || 10, 200)); // clamp 1-200 (consistent with MAX_SEARCH_LIMIT)
       if (!q || !agentId) {
         jsonResponse(res, 400, { error: 'Required query params: q, agentId' });
         return;
@@ -143,6 +149,12 @@ const server = createServer(async (req, res) => {
     // POST /tool/:name — call a tool
     const toolMatch = url.match(/^\/tool\/([a-z_]+)$/);
     if (toolMatch && req.method === 'POST') {
+      // Validate Content-Type for POST requests
+      const contentType = req.headers['content-type'] ?? '';
+      if (contentType && !contentType.includes('application/json')) {
+        jsonResponse(res, 415, { error: 'Unsupported Media Type: expected application/json' });
+        return;
+      }
       const toolName = toolMatch[1];
       const body = await readBody(req);
       let args: Record<string, unknown>;

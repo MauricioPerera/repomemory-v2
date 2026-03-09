@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, unlinkSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, unlinkSync, readdirSync, lstatSync } from 'node:fs';
 import { join, dirname, relative, resolve, isAbsolute, sep } from 'node:path';
 import type { RefInfo } from '../types/results.js';
 import { safeJsonParse, safeJsonStringify } from '../serialization/json.js';
@@ -86,15 +86,32 @@ export class RefStore {
     return this.walkRefs(this.dir).map(p => relative(this.dir, p));
   }
 
-  private walkRefs(dir: string): string[] {
+  /** Maximum directory depth to prevent stack overflow on deeply nested refs */
+  private static readonly MAX_WALK_DEPTH = 20;
+
+  private walkRefs(dir: string, visited = new Set<string>(), depth = 0): string[] {
     const result: string[] = [];
     if (!existsSync(dir)) return result;
+    if (depth > RefStore.MAX_WALK_DEPTH) return result;
+
+    // Resolve real path to detect symlink cycles
+    const realDir = resolve(dir);
+    if (visited.has(realDir)) return result;
+    visited.add(realDir);
+
     for (const entry of readdirSync(dir)) {
       const full = join(dir, entry);
-      if (statSync(full).isDirectory()) {
-        result.push(...this.walkRefs(full));
-      } else if (entry.endsWith('.ref')) {
-        result.push(full);
+      try {
+        const lst = lstatSync(full);
+        // Skip symlinks entirely to prevent cycle attacks
+        if (lst.isSymbolicLink()) continue;
+        if (lst.isDirectory()) {
+          result.push(...this.walkRefs(full, visited, depth + 1));
+        } else if (entry.endsWith('.ref')) {
+          result.push(full);
+        }
+      } catch {
+        // Skip entries that can't be stat'd (permission errors, broken links)
       }
     }
     return result;

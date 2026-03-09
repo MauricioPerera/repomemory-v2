@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { RepoMemoryError } from '../types/errors.js';
 import { safeJsonParse, safeJsonStringify } from '../serialization/json.js';
@@ -56,8 +56,13 @@ export class ObjectStore {
     if (!existsSync(this.dir)) return hashes;
     for (const prefix of readdirSync(this.dir)) {
       const prefixDir = join(this.dir, prefix);
-      for (const file of readdirSync(prefixDir)) {
-        hashes.push(file.replace('.json', ''));
+      try {
+        if (!statSync(prefixDir).isDirectory()) continue;
+        for (const file of readdirSync(prefixDir)) {
+          if (file.endsWith('.json')) hashes.push(file.replace('.json', ''));
+        }
+      } catch {
+        // Skip entries that can't be read (stray files, permission errors)
       }
     }
     return hashes;

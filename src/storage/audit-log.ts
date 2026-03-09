@@ -1,6 +1,7 @@
-import { existsSync, mkdirSync, appendFileSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, appendFileSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { safeJsonStringify } from '../serialization/json.js';
+import { atomicWriteFileSync } from './atomic-write.js';
 
 export interface AuditEntry {
   timestamp: string;
@@ -51,7 +52,10 @@ export class AuditLog {
     if (!content) return;
     const lines = content.split('\n');
     if (lines.length <= maxLines) return;
-    const kept = lines.slice(lines.length - maxLines);
-    writeFileSync(this.path, kept.join('\n') + '\n', 'utf8');
+    // Keep only valid JSON lines during rotation (filter corrupted entries)
+    const kept = lines.slice(lines.length - maxLines).filter(line => {
+      try { JSON.parse(line); return true; } catch { return false; }
+    });
+    atomicWriteFileSync(this.path, kept.join('\n') + '\n');
   }
 }

@@ -229,7 +229,8 @@ export abstract class BaseCollection<T extends Entity> {
     const scope = this.searchScope(agentId, userId);
     const expanded = expandQuery(query);
     const ranked = this.searchEngine.rank(scope, expanded, cappedLimit * 3);
-    const queryTags = expanded.toLowerCase().split(/\s+/).filter(t => t.length > 1);
+    // Stem query tags for consistency with entity tags (TF-IDF pipeline stems both)
+    const queryTags = expanded.toLowerCase().split(/\s+/).filter(t => t.length > 1).map(t => stem(t));
     return this.scoreAndRank(ranked, queryTags, cappedLimit);
   }
 
@@ -238,7 +239,7 @@ export abstract class BaseCollection<T extends Entity> {
     this.searchEngine.flush();
     const expanded = expandQuery(query);
     const ranked = this.searchEngine.rankMultiScope(scopes, expanded, cappedLimit * 3);
-    const queryTags = expanded.toLowerCase().split(/\s+/).filter(t => t.length > 1);
+    const queryTags = expanded.toLowerCase().split(/\s+/).filter(t => t.length > 1).map(t => stem(t));
     return this.scoreAndRank(ranked, queryTags, cappedLimit);
   }
 

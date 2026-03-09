@@ -49,24 +49,32 @@ abstract class BaseConsolidationPipeline<T extends Entity> {
 
     const plan = await this.planChunk(this.serializeChunk(items));
 
+    // Build a set of valid IDs from the chunk to prevent AI-hallucinated deletions
+    const validIds = new Set(items.map(i => i.id));
+
     let merged = 0;
     let removed = 0;
 
     for (const merge of plan.merge) {
+      // Validate all sourceIds belong to this chunk before any mutation
+      const validSrcIds = merge.sourceIds.filter(id => validIds.has(id));
+      if (validSrcIds.length === 0) continue;
       this.saveMerged(
         (items[0] as unknown as { agentId: string }).agentId,
         'userId' in items[0] ? (items[0] as unknown as { userId: string }).userId : undefined,
         merge.merged,
       );
-      for (const srcId of merge.sourceIds) {
+      for (const srcId of validSrcIds) {
         try { this.deleteItem(srcId); } catch (err) {
           if (!(err instanceof RepoMemoryError && err.code === 'NOT_FOUND')) throw err;
         }
       }
-      merged += merge.sourceIds.length;
+      merged += validSrcIds.length;
     }
 
     for (const removeId of plan.remove) {
+      // Only delete IDs that belong to this chunk (prevent AI hallucination)
+      if (!validIds.has(removeId)) continue;
       try { this.deleteItem(removeId); removed++; } catch (err) {
         if (!(err instanceof RepoMemoryError && err.code === 'NOT_FOUND')) throw err;
       }

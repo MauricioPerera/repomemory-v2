@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { sha256 } from './object-store.js';
 import { RepoMemoryError } from '../types/errors.js';
@@ -50,9 +50,14 @@ export class CommitStore {
       if (chain.length >= maxDepth) break;
       if (visited.has(current)) break; // cycle detection
       visited.add(current);
-      const commit = this.read(current);
-      chain.push(commit);
-      current = commit.parent;
+      try {
+        const commit = this.read(current);
+        chain.push(commit);
+        current = commit.parent;
+      } catch {
+        // Broken commit chain (missing/corrupted commit) — return partial history
+        break;
+      }
     }
     return chain;
   }
@@ -66,8 +71,13 @@ export class CommitStore {
     if (!existsSync(this.dir)) return hashes;
     for (const prefix of readdirSync(this.dir)) {
       const prefixDir = join(this.dir, prefix);
-      for (const file of readdirSync(prefixDir)) {
-        hashes.push(file.replace('.json', ''));
+      try {
+        if (!statSync(prefixDir).isDirectory()) continue;
+        for (const file of readdirSync(prefixDir)) {
+          if (file.endsWith('.json')) hashes.push(file.replace('.json', ''));
+        }
+      } catch {
+        // Skip entries that can't be read (stray files, permission errors)
       }
     }
     return hashes;

@@ -14,6 +14,7 @@ import { cmdExport } from './cli/commands/export.js';
 import { cmdImport } from './cli/commands/import.js';
 import { cmdRecall } from './cli/commands/recall.js';
 import { cmdCleanup } from './cli/commands/cleanup.js';
+import { cmdRag } from './cli/commands/rag.js';
 import { print, printError } from './cli/output.js';
 
 const HELP = `repomemory v2 — Git-inspired agentic memory
@@ -32,6 +33,10 @@ Commands:
   cleanup [--max-age 90] [--dry-run]                 Remove stale entities
   export <file.json>                                 Export all entities to file
   import <file.json> [--skip-existing]               Import entities from file
+  rag ingest <path> --agent <id> [--chunk-size 1000]  Ingest docs into RAG
+  rag query <query> --agent <id> [--provider ...]     Query RAG knowledge
+  rag sync <path> --agent <id>                        Sync directory with RAG
+  rag status --agent <id>                             RAG stats for agent
   stats                                              Show storage stats
   verify                                             Verify storage integrity`;
 
@@ -52,6 +57,7 @@ async function main(): Promise<void> {
     case 'cleanup': cmdCleanup(args); break;
     case 'export': cmdExport(args); break;
     case 'import': cmdImport(args); break;
+    case 'rag': await cmdRag(args); break;
     case 'stats': cmdStats(args); break;
     case 'verify': cmdVerify(args); break;
     case 'help': case '--help': case '-h': print(HELP); break;

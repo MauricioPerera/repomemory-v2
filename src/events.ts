@@ -9,6 +9,9 @@ export interface RepoMemoryEvents {
   'session:mined': { sessionId: string };
   'session:automine:error': { sessionId: string; error: string };
   'consolidation:done': { type: string; agentId: string };
+  'rag:ingest:done': { agentId: string; filesProcessed: number; chunksIngested: number };
+  'rag:query:done': { agentId: string; query: string; chunksUsed: number; hasAiAnswer: boolean };
+  'rag:sync:done': { agentId: string; modified: number; deleted: number; newFiles: number };
 }
 
 export type EventName = keyof RepoMemoryEvents;

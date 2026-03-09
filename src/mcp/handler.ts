@@ -347,6 +347,61 @@ export const tools: ToolDef[] = [
       required: ['data'],
     },
   },
+  // -- RAG --
+  {
+    name: 'rag_ingest',
+    description: 'Ingest a file or directory into knowledge store as RAG chunks. Splits documents, deduplicates, and indexes for retrieval.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'File or directory path to ingest' },
+        agentId: { type: 'string', description: 'Agent identifier' },
+        chunkSize: { type: 'number', description: 'Target chunk size in characters (default: 1000)' },
+        overlap: { type: 'number', description: 'Overlap between chunks in characters (default: 200)' },
+        strategy: { type: 'string', enum: ['fixed', 'paragraph', 'markdown'], description: 'Chunking strategy (default: auto-detect)' },
+      },
+      required: ['path', 'agentId'],
+    },
+  },
+  {
+    name: 'rag_query',
+    description: 'Query RAG knowledge chunks by text. Returns relevant chunks with formatted context. If AI is configured, generates an answer.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agentId: { type: 'string', description: 'Agent identifier' },
+        query: { type: 'string', description: 'Natural language query' },
+        limit: { type: 'number', description: 'Max chunks to retrieve (default: 10)' },
+        includeShared: { type: 'boolean', description: 'Include shared knowledge (default: false)' },
+      },
+      required: ['agentId', 'query'],
+    },
+  },
+  {
+    name: 'rag_sync',
+    description: 'Sync a directory with the knowledge store. Detects new/modified/deleted files and updates chunks accordingly.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Directory path to sync' },
+        agentId: { type: 'string', description: 'Agent identifier' },
+        chunkSize: { type: 'number', description: 'Target chunk size in characters (default: 1000)' },
+        overlap: { type: 'number', description: 'Overlap between chunks in characters (default: 200)' },
+      },
+      required: ['path', 'agentId'],
+    },
+  },
+  {
+    name: 'rag_status',
+    description: 'Get RAG status for an agent: total chunks, unique sources, and storage stats.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agentId: { type: 'string', description: 'Agent identifier' },
+      },
+      required: ['agentId'],
+    },
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -582,6 +637,43 @@ export async function handleTool(mem: RepoMemory, name: string, args: Record<str
       return mem.import(args.data as Parameters<typeof mem.import>[0], {
         skipExisting: optionalBoolean(args, 'skipExisting'),
       });
+    }
+
+    // RAG
+    case 'rag_ingest': {
+      const { ingestPath } = await import('../rag/ingest.js');
+      return ingestPath(mem, requireString(args, 'path'), {
+        agent: requireString(args, 'agentId'),
+        chunkSize: optionalNumber(args, 'chunkSize'),
+        overlap: optionalNumber(args, 'overlap'),
+        strategy: optionalString(args, 'strategy') as 'fixed' | 'paragraph' | 'markdown' | undefined,
+      });
+    }
+    case 'rag_query': {
+      return await mem.ragQuery(requireString(args, 'agentId'), requireString(args, 'query'), {
+        limit: optionalNumber(args, 'limit'),
+        includeShared: optionalBoolean(args, 'includeShared'),
+      });
+    }
+    case 'rag_sync': {
+      const { syncDirectory } = await import('../rag/sync.js');
+      return syncDirectory(mem, requireString(args, 'path'), {
+        agent: requireString(args, 'agentId'),
+        chunkSize: optionalNumber(args, 'chunkSize'),
+        overlap: optionalNumber(args, 'overlap'),
+      });
+    }
+    case 'rag_status': {
+      const agentId = requireString(args, 'agentId');
+      const all = mem.knowledge.list(agentId);
+      const ragChunks = all.filter(k => k.source != null && k.chunkIndex != null);
+      const sources = new Set(ragChunks.map(k => k.source));
+      return {
+        totalChunks: ragChunks.length,
+        uniqueSources: sources.size,
+        sources: [...sources],
+        totalKnowledge: all.length,
+      };
     }
     default:
       throw new RepoMemoryError('INVALID_INPUT', `Unknown tool: ${name}`);

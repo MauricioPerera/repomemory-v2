@@ -16,6 +16,13 @@ export default defineConfig([
     sourcemap: true,
   },
   {
+    entry: ['src/rag/index.ts'],
+    outDir: 'dist/rag',
+    format: ['esm'],
+    dts: true,
+    sourcemap: true,
+  },
+  {
     entry: ['src/cli.ts'],
     format: ['esm'],
     banner: { js: '#!/usr/bin/env node' },

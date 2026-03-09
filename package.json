@@ -18,6 +18,10 @@
     "./ai": {
       "import": "./dist/ai/index.js",
       "types": "./dist/ai/index.d.ts"
+    },
+    "./rag": {
+      "import": "./dist/rag/index.js",
+      "types": "./dist/rag/index.d.ts"
     }
   },
   "scripts": {

@@ -183,6 +183,30 @@ export class RepoMemory {
     return result;
   }
 
+  async ragIngest(path: string, agentId: string, options?: Record<string, unknown>): Promise<unknown> {
+    const { RagPipeline } = await import('./rag/index.js');
+    const rag = new RagPipeline(this, { ai: this.ai });
+    const result = await rag.ingest(path, { agent: agentId, ...options });
+    this.events.emit('rag:ingest:done', { agentId, filesProcessed: result.filesProcessed, chunksIngested: result.chunksIngested });
+    return result;
+  }
+
+  async ragQuery(agentId: string, query: string, options?: Record<string, unknown>): Promise<unknown> {
+    const { RagPipeline } = await import('./rag/index.js');
+    const rag = new RagPipeline(this, { ai: this.ai });
+    const result = await rag.query(agentId, query, options as undefined);
+    this.events.emit('rag:query:done', { agentId, query, chunksUsed: result.chunksUsed, hasAiAnswer: result.answer !== null });
+    return result;
+  }
+
+  async ragSync(dirPath: string, agentId: string, options?: Record<string, unknown>): Promise<unknown> {
+    const { RagPipeline } = await import('./rag/index.js');
+    const rag = new RagPipeline(this, { ai: this.ai });
+    const result = await rag.sync(dirPath, { agent: agentId, ...options });
+    this.events.emit('rag:sync:done', { agentId, modified: result.modifiedFiles, deleted: result.deletedFiles, newFiles: result.newFiles });
+    return result;
+  }
+
   cleanup(options: CleanupOptions = {}): CleanupReport {
     const report = runCleanup(this, this.storage, options);
     // Flush search index changes to disk after deletions

@@ -8,7 +8,9 @@ export type ErrorCode =
   | 'AI_ERROR'
   | 'SNAPSHOT_ERROR'
   | 'PARSE_ERROR'
-  | 'MIDDLEWARE_CANCELLED';
+  | 'MIDDLEWARE_CANCELLED'
+  | 'RAG_LOAD_ERROR'
+  | 'RAG_INGEST_ERROR';
 
 export class RepoMemoryError extends Error {
   constructor(

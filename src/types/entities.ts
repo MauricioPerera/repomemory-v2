@@ -1,6 +1,6 @@
 export const SHARED_AGENT_ID = '_shared';
 
-export type MemoryCategory = 'fact' | 'decision' | 'issue' | 'task';
+export type MemoryCategory = 'fact' | 'decision' | 'issue' | 'task' | 'correction';
 export type SkillCategory = 'procedure' | 'configuration' | 'troubleshooting' | 'workflow';
 export type SkillStatus = 'active' | 'deprecated' | 'draft';
 

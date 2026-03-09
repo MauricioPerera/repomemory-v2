@@ -14,6 +14,10 @@ export async function createAiProvider(provider: string, model?: string, baseUrl
       const { AnthropicProvider } = await import('../ai/providers/anthropic.js');
       return new AnthropicProvider({ model });
     }
+    case 'cloudflare': {
+      const { CloudflareProvider } = await import('../ai/providers/cloudflare.js');
+      return new CloudflareProvider({ model, ...(baseUrl ? { gateway: baseUrl } : {}) });
+    }
     default:
       return null;
   }

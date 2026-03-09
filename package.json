@@ -1,6 +1,6 @@
 {
   "name": "@rckflr/repomemory",
-  "version": "2.15.0",
+  "version": "2.16.0",
   "description": "Git-inspired agentic memory system — library + CLI",
   "type": "module",
   "main": "dist/index.js",

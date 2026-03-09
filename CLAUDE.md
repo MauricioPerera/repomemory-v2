@@ -102,6 +102,11 @@ Optional semantic search via `@huggingface/transformers` (EmbeddingGemma-300m, 3
 - **Neural fire-and-forget indexing (v2.15.0)**: `BaseCollection.neuralIndex()` calls `engine.index().catch(() => {})` — embedding computation (~10-50ms) never blocks the synchronous save path. Do NOT make neural indexing synchronous or awaited.
 - **Neural store binary format (v2.15.0)**: `EmbeddingStore` uses JSON manifest (`ids[]`) + contiguous Float32 binary file per scope. Scope paths use same encoding as SearchEngine. Do NOT add per-entity files.
 - **Neural scoring integration (v2.15.0)**: `computeScore()` normalizes weights to sum to 1.0 when `embeddingScore` is provided. When `embeddingWeight=0` (default), the formula is **mathematically identical** to pre-neural behavior. Do NOT change the normalization logic.
+- **CloudflareProvider (v2.16.0)**: Dedicated Cloudflare Workers AI provider with OpenAI-compatible endpoints. Supports direct API and AI Gateway URLs. Uses `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` env vars. Follows same retry/timeout pattern as OpenAiProvider.
+- **Correction boost (v2.16.0)**: New `'correction'` memory category with 2x scoring multiplier (`correctionBoost` in `ScoringWeights`). Corrections surface above regular memories to override incorrect information. Formatted with `[CORRECTION]` prefix in recall output.
+- **Prompt templates (v2.16.0)**: `src/recall/templates.ts` defines configurable templates controlling section order, headers, preamble, and per-collection weight multipliers. 4 built-in templates: `default`, `technical`, `support`, `rag_focused`. Templates resolved via `resolveTemplate()`. RecallEngine applies collection weight multipliers before score pooling. Do NOT change the weight normalization in `computeScore()` — template weights are applied externally as score multipliers.
+- **CTT Metrics (v2.16.0)**: `MetricsTracker` stores per-agent-per-day JSON in `{dir}/metrics/`. Tracks recall calls, hits, items returned, top scores, corrections, mining, unique queries. Lightweight — no entity/commit overhead. MCP tool `ctt_metrics` aggregates and returns daily trend + summary.
+- **MCP tool count (v2.16.0)**: 34 tools total. New tools: `memory_correct`, `recall_templates`, `ctt_metrics`. The `recall` tool now accepts optional `template` parameter.
 
 ### Key conventions
 

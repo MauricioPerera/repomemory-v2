@@ -9,6 +9,8 @@ export interface ScoringWeights {
   decayRate?: number;
   /** Maximum access boost multiplier (default 5.0). Prevents runaway popularity. */
   maxAccessBoost?: number;
+  /** Multiplier applied to correction entities (default 2.0). Ensures corrections surface above conflicting memories. */
+  correctionBoost?: number;
 }
 
 export const DEFAULT_SCORING_WEIGHTS: Required<ScoringWeights> = {
@@ -17,6 +19,7 @@ export const DEFAULT_SCORING_WEIGHTS: Required<ScoringWeights> = {
   embeddingWeight: 0,
   decayRate: 0.005,
   maxAccessBoost: 5.0,
+  correctionBoost: 2.0,
 };
 
 export interface ScoringParams {
@@ -27,10 +30,12 @@ export interface ScoringParams {
   weights?: ScoringWeights;
   /** Neural embedding cosine similarity (0..1). Optional — when absent, formula is identical to pre-neural behavior. */
   embeddingScore?: number;
+  /** When true, applies correctionBoost multiplier to the final score. */
+  isCorrection?: boolean;
 }
 
 export function computeScore(params: ScoringParams): number {
-  const { tfidfScore, tagOverlap, daysSinceUpdate, accessCount, weights, embeddingScore } = params;
+  const { tfidfScore, tagOverlap, daysSinceUpdate, accessCount, weights, embeddingScore, isCorrection } = params;
   const w = { ...DEFAULT_SCORING_WEIGHTS, ...weights };
 
   // When embedding score is available and has weight, include it in relevance
@@ -47,7 +52,8 @@ export function computeScore(params: ScoringParams): number {
   // count=0 → 1.0, count=1 → 1.58, count=10 → 3.58, capped at maxAccessBoost
   const rawBoost = Math.log2(2 + accessCount);
   const accessBoost = Math.min(rawBoost, w.maxAccessBoost);
-  return relevance * decay * accessBoost;
+  const base = relevance * decay * accessBoost;
+  return isCorrection ? base * w.correctionBoost : base;
 }
 
 /**

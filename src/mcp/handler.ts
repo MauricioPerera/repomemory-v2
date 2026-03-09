@@ -9,6 +9,8 @@ import { RepoMemoryError } from '../types/errors.js';
 import { scopeFromParts } from '../scoping.js';
 import { SHARED_AGENT_ID } from '../types/entities.js';
 import type { EntityType } from '../types/entities.js';
+import { listTemplates } from '../recall/templates.js';
+import { MetricsTracker } from '../metrics/tracker.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -80,6 +82,21 @@ export const tools: ToolDef[] = [
         content: { type: 'string' },
         tags: { type: 'array', items: { type: 'string' } },
         category: { type: 'string', enum: ['fact', 'decision', 'issue', 'task'] },
+      },
+      required: ['agentId', 'userId', 'content'],
+    },
+  },
+  {
+    name: 'memory_correct',
+    description: 'Save a correction that overrides conflicting memories. Corrections receive a scoring boost to ensure they surface above incorrect information.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        agentId: { type: 'string', description: 'Agent identifier' },
+        userId: { type: 'string', description: 'User identifier' },
+        content: { type: 'string', description: 'The corrected information' },
+        tags: { type: 'array', items: { type: 'string' }, description: 'Tags for categorization' },
+        supersedes: { type: 'string', description: 'Entity ID of the memory being corrected (optional)' },
       },
       required: ['agentId', 'userId', 'content'],
     },
@@ -272,8 +289,18 @@ export const tools: ToolDef[] = [
         includeSharedSkills: { type: 'boolean' },
         includeSharedKnowledge: { type: 'boolean' },
         includeProfile: { type: 'boolean' },
+        template: { type: 'string', description: 'Prompt template ID (default, technical, support, rag_focused) or omit for default' },
       },
       required: ['agentId', 'userId', 'query'],
+    },
+  },
+  {
+    name: 'recall_templates',
+    description: 'List available prompt templates for context injection. Templates control section order, headers, and collection weight multipliers.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {},
+      required: [],
     },
   },
   {
@@ -401,6 +428,19 @@ export const tools: ToolDef[] = [
       type: 'object',
       properties: {
         agentId: { type: 'string', description: 'Agent identifier' },
+      },
+      required: ['agentId'],
+    },
+  },
+  // -- CTT Metrics --
+  {
+    name: 'ctt_metrics',
+    description: 'Get Context-Time Training effectiveness metrics for an agent. Shows recall hit rate, average items returned, correction count, mining extractions, and daily trend.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        agentId: { type: 'string', description: 'Agent identifier' },
+        days: { type: 'number', description: 'Number of days to include in trend (default: 7)' },
       },
       required: ['agentId'],
     },
@@ -537,6 +577,21 @@ export async function handleTool(mem: RepoMemory, name: string, args: Record<str
       });
       return { entity, commit, deduplicated: meta.deduplicated };
     }
+    case 'memory_correct': {
+      const agentId = requireString(args, 'agentId');
+      const userId = requireString(args, 'userId');
+      const content = requireString(args, 'content');
+      const tags = optionalStringArray(args, 'tags');
+      const supersedes = optionalString(args, 'supersedes');
+      const finalTags = [...(tags ?? [])];
+      if (supersedes) finalTags.push(`supersedes:${supersedes}`);
+      const [entity, commit] = mem.memories.save(agentId, userId, {
+        content,
+        tags: finalTags,
+        category: 'correction' as const,
+      });
+      return { entity, commit };
+    }
     case 'memory_list': {
       return mem.memories.listPaginated(requireString(args, 'agentId'), requireString(args, 'userId'), {
         limit: optionalNumber(args, 'limit'),
@@ -648,6 +703,7 @@ export async function handleTool(mem: RepoMemory, name: string, args: Record<str
       if (inclSkills != null) opts.includeSharedSkills = inclSkills;
       if (inclKnowledge != null) opts.includeSharedKnowledge = inclKnowledge;
       if (inclProfile != null) opts.includeProfile = inclProfile;
+      opts.template = args.template as string | undefined;
       const ctx = mem.recall(requireString(args, 'agentId'), requireString(args, 'userId'), requireString(args, 'query'), opts);
       return {
         formatted: ctx.formatted,
@@ -656,6 +712,8 @@ export async function handleTool(mem: RepoMemory, name: string, args: Record<str
         profile: ctx.profile,
       };
     }
+    case 'recall_templates':
+      return listTemplates();
     case 'entity_get': {
       const col = collectionFor(mem, requireString(args, 'type'));
       return col.get(requireString(args, 'entityId'));
@@ -724,6 +782,23 @@ export async function handleTool(mem: RepoMemory, name: string, args: Record<str
         sources: [...sources],
         totalKnowledge: all.length,
       };
+    }
+
+    // CTT Metrics
+    case 'ctt_metrics': {
+      const agentId = String(args.agentId ?? '');
+      const days = Number(args.days) || 7;
+      if (!agentId) throw new RepoMemoryError('INVALID_INPUT', 'agentId is required');
+      const tracker = new MetricsTracker(mem.dir);
+      const now = new Date();
+      const from = new Date(now);
+      from.setDate(from.getDate() - days + 1);
+      const fromStr = from.toISOString().slice(0, 10);
+      const toStr = now.toISOString().slice(0, 10);
+      const aggregated = tracker.getRange(agentId, fromStr, toStr);
+      const summary = MetricsTracker.summary(aggregated);
+      const trend = tracker.getTrend(agentId, days);
+      return { aggregated, summary, trend };
     }
 
     // Neural

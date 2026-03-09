@@ -2,7 +2,9 @@ import type { RepoMemory } from '../index.js';
 import type { AccessTracker } from '../storage/access-tracker.js';
 import type { Memory, Skill, Knowledge, Profile } from '../types/entities.js';
 import type { SearchResult, RecallContext, RecallOptions } from '../types/results.js';
-import { formatRecallContext } from './formatter.js';
+import { formatRecallContext, formatWithTemplate } from './formatter.js';
+import { resolveTemplate } from './templates.js';
+import type { PromptTemplate } from './templates.js';
 
 const DEFAULT_MAX_ITEMS = 20;
 const DEFAULT_MAX_CHARS = 8_000;
@@ -21,6 +23,17 @@ export class RecallEngine {
     const includeProfile = options?.includeProfile ?? true;
     const collections = options?.collections ?? ['memories', 'skills', 'knowledge'];
 
+    // Resolve template (if provided)
+    let template: PromptTemplate | undefined;
+    if (options?.template) {
+      template = resolveTemplate(options.template);
+    }
+
+    // Collection weight multipliers from template
+    const memWeight = template?.collectionWeights?.memories ?? 1.0;
+    const skillWeight = template?.collectionWeights?.skills ?? 1.0;
+    const knowledgeWeight = template?.collectionWeights?.knowledge ?? 1.0;
+
     // Fetch generous candidates from each collection (2x budget)
     const fetchLimit = Math.max(10, maxItems * 2);
 
@@ -33,19 +46,19 @@ export class RecallEngine {
 
     if (collections.includes('memories')) {
       for (const r of this.repo.memories.search(agentId, userId, query, fetchLimit)) {
-        pool.push({ source: 'memories', result: r });
+        pool.push({ source: 'memories', result: { entity: r.entity, score: r.score * memWeight } });
       }
     }
 
     if (collections.includes('skills')) {
       for (const r of this.repo.skills.search(agentId, query, fetchLimit, includeSharedSkills)) {
-        pool.push({ source: 'skills', result: r });
+        pool.push({ source: 'skills', result: { entity: r.entity, score: r.score * skillWeight } });
       }
     }
 
     if (collections.includes('knowledge')) {
       for (const r of this.repo.knowledge.search(agentId, query, fetchLimit, includeSharedKnowledge)) {
-        pool.push({ source: 'knowledge', result: r });
+        pool.push({ source: 'knowledge', result: { entity: r.entity, score: r.score * knowledgeWeight } });
       }
     }
 
@@ -78,7 +91,12 @@ export class RecallEngine {
     }
 
     const totalItems = memories.length + skills.length + knowledge.length + (profile ? 1 : 0);
-    const formatted = formatRecallContext({ memories, skills, knowledge, profile }, maxChars);
+    const recallData = { memories, skills, knowledge, profile };
+
+    // Use template-aware formatter if template provided, otherwise default
+    const formatted = template
+      ? formatWithTemplate(recallData, template, maxChars)
+      : formatRecallContext(recallData, maxChars);
     const estimatedChars = formatted.length;
 
     return {

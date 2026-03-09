@@ -82,6 +82,9 @@ export interface RecallOptions {
   includeSharedKnowledge?: boolean;
   includeProfile?: boolean;
   collections?: Array<'memories' | 'skills' | 'knowledge'>;
+  /** Prompt template ID (built-in) or custom PromptTemplate object.
+   *  Controls section order, headers, collection weights, and preamble. */
+  template?: string | import('../recall/templates.js').PromptTemplate;
 }
 
 export interface RecallContext {

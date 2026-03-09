@@ -1,5 +1,7 @@
 import type { Entity, Memory, Skill, Knowledge, Profile } from '../types/entities.js';
 import type { SearchResult } from '../types/results.js';
+import { DEFAULT_HEADERS } from './templates.js';
+import type { PromptTemplate } from './templates.js';
 
 export interface RecallData {
   memories: SearchResult<Memory>[];
@@ -71,6 +73,59 @@ export function formatRecallContext(data: RecallData, maxChars: number): string 
   return sections.join('\n\n');
 }
 
+/**
+ * Format recall context using a configurable template.
+ * Template controls section order, headers, and optional preamble.
+ */
+export function formatWithTemplate(data: RecallData, template: PromptTemplate, maxChars: number): string {
+  const sections: string[] = [];
+  let remaining = maxChars;
+
+  // Optional preamble
+  if (template.preamble) {
+    if (template.preamble.length <= remaining) {
+      sections.push(template.preamble);
+      remaining -= template.preamble.length + 2; // +2 for \n\n separator
+    }
+  }
+
+  const headers = { ...DEFAULT_HEADERS, ...template.sectionHeaders };
+
+  for (const section of template.sectionOrder) {
+    if (remaining <= 100) break;
+
+    if (section === 'profile' && data.profile) {
+      const profileSection = formatProfileWithHeader(data.profile, headers.profile);
+      if (profileSection.length <= remaining) {
+        sections.push(profileSection);
+        remaining -= profileSection.length + 2;
+      }
+    } else if (section === 'memories' && data.memories.length > 0) {
+      const s = formatSection(headers.memories, data.memories, remaining, formatMemoryItem);
+      if (s) { sections.push(s); remaining -= s.length + 2; }
+    } else if (section === 'skills' && data.skills.length > 0) {
+      const s = formatSection(headers.skills, data.skills, remaining, formatSkillItem);
+      if (s) { sections.push(s); remaining -= s.length + 2; }
+    } else if (section === 'knowledge' && data.knowledge.length > 0) {
+      const s = formatSection(headers.knowledge, data.knowledge, remaining, formatKnowledgeItem);
+      if (s) { sections.push(s); remaining -= s.length + 2; }
+    }
+  }
+
+  return sections.join('\n\n');
+}
+
+function formatProfileWithHeader(profile: Profile, header: string): string {
+  const lines = [header, profile.content];
+  if (profile.metadata && Object.keys(profile.metadata).length > 0) {
+    const meta = Object.entries(profile.metadata)
+      .map(([k, v]) => `- ${k}: ${String(v)}`)
+      .join('\n');
+    lines.push(meta);
+  }
+  return lines.join('\n');
+}
+
 function formatProfile(profile: Profile): string {
   const lines = ['## User Profile', profile.content];
   if (profile.metadata && Object.keys(profile.metadata).length > 0) {
@@ -106,6 +161,9 @@ function formatSection<T extends Entity>(
 
 function formatMemoryItem(m: Memory): string {
   const tags = m.tags.length > 0 ? ` [${m.tags.join(', ')}]` : '';
+  if (m.category === 'correction') {
+    return `- [CORRECTION]${tags} ${m.content}`;
+  }
   return `- [${m.category}]${tags} ${m.content}`;
 }
 

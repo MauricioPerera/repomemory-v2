@@ -230,6 +230,7 @@ export abstract class BaseCollection<T extends Entity> {
 
       const tags = 'tags' in entity ? (entity.tags as string[]) : [];
       const accessCount = 'accessCount' in entity ? (entity.accessCount as number) : 0;
+      const isCorrection = entity.type === 'memory' && 'category' in entity && (entity as { category: string }).category === 'correction';
 
       const score = computeScore({
         tfidfScore,
@@ -237,6 +238,7 @@ export abstract class BaseCollection<T extends Entity> {
         daysSinceUpdate: daysBetween(entity.updatedAt, now),
         accessCount,
         weights: this.scoringWeights,
+        isCorrection,
       });
 
       scored.push({ entity, score });

@@ -99,6 +99,11 @@ export class RepoMemory {
     }
   }
 
+  /** Storage directory path */
+  get dir(): string {
+    return this.config.dir;
+  }
+
   /** Lazy-load and wire the neural engine */
   private async initNeural(config: RepoMemoryConfig): Promise<boolean> {
     try {

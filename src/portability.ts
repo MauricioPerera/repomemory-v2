@@ -135,9 +135,19 @@ export function importData(
     ...(data.entities.profiles ?? []),
   ];
 
+  // Pre-validate all entities and detect duplicate IDs within the import data
+  const seenIds = new Set<string>();
   for (let i = 0; i < allEntities.length; i++) {
     const entity = allEntities[i];
     validateEntity(entity, i);
+    if (seenIds.has(entity.id)) {
+      throw new RepoMemoryError('INVALID_INPUT', `Import contains duplicate entity ID: ${entity.id} (at index ${i})`);
+    }
+    seenIds.add(entity.id);
+  }
+
+  for (let i = 0; i < allEntities.length; i++) {
+    const entity = allEntities[i];
     const existing = storage.load(entity.id);
 
     if (existing) {

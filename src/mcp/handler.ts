@@ -489,6 +489,24 @@ export async function handleTool(mem: RepoMemory, name: string, args: Record<str
 
     // Sessions
     case 'session_save': {
+      // Validate messages[] structure if provided
+      if (args.messages != null) {
+        if (!Array.isArray(args.messages)) {
+          throw new Error('Invalid parameter: messages (expected array)');
+        }
+        for (let i = 0; i < (args.messages as unknown[]).length; i++) {
+          const msg = (args.messages as Record<string, unknown>[])[i];
+          if (!msg || typeof msg !== 'object') {
+            throw new Error(`Invalid parameter: messages[${i}] (expected object with role and content)`);
+          }
+          if (typeof msg.role !== 'string' || (msg.role as string).length === 0) {
+            throw new Error(`Invalid parameter: messages[${i}].role (expected non-empty string)`);
+          }
+          if (typeof msg.content !== 'string') {
+            throw new Error(`Invalid parameter: messages[${i}].content (expected string)`);
+          }
+        }
+      }
       const [entity, commit] = mem.sessions.save(requireString(args, 'agentId'), requireString(args, 'userId'), {
         content: requireString(args, 'content'),
         messages: args.messages,
@@ -576,7 +594,7 @@ export async function handleTool(mem: RepoMemory, name: string, args: Record<str
 
 const SERVER_INFO = {
   name: 'repomemory',
-  version: '2.11.0',
+  version: '2.12.0',
 };
 
 const CAPABILITIES = {

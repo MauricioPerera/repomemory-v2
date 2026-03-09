@@ -71,8 +71,17 @@ Query → synonym expansion (`query-expander.ts`) → tokenize + stopwords → P
 - **Skills dedup in mining**: Mining uses `saveOrUpdate()` for both memories and skills. Do NOT use plain `save()` for skills in the mining pipeline — it creates duplicates.
 - **CLI `--base-url`**: The `mine` and `consolidate` commands accept `--base-url` for custom AI endpoints. `OpenAiProvider` also reads `OPENAI_BASE_URL` env var.
 - **Content size limit**: `StorageEngine.validateEntity()` checks `Buffer.byteLength(content, 'utf8')` against `MAX_CONTENT_SIZE` (1 MB). Prevents DoS via oversized entities. Applied to all entity types on save.
-- **Bounded scans**: `listConversations()` uses `MAX_SCAN = 5000` to cap session scanning. `listEntitiesByPrefix()` accepts `maxResults` (default 10,000). `getByUserAcrossAgents()` accepts `limit` (default 50) with early break. Do NOT remove these caps — they prevent OOM on large datasets.
+- **Bounded scans**: `listConversations()` uses `MAX_SCAN = 5000` to cap session scanning (returns `truncated: true` when exceeded). `listEntitiesByPrefix()` accepts `maxResults` (default 10,000). `getByUserAcrossAgents()` accepts `limit` (default 50) with early break. Do NOT remove these caps — they prevent OOM on large datasets.
 - **Knowledge dedup source check**: `saveOrUpdate()` on knowledge filters candidates by matching `source` field. Two knowledge entries with different sources will not be considered duplicates even if content is similar.
+- **Search limit cap (v2.12.0)**: `find()` and `findMultiScope()` clamp the `limit` parameter to `MAX_SEARCH_LIMIT` (200). Do NOT remove this cap — it prevents DoS via excessive limit values.
+- **Entity validation (v2.12.0)**: `StorageEngine.validateEntity()` validates entity type against a whitelist (`VALID_ENTITY_TYPES`) and caps tags arrays to `MAX_TAGS` (50). Prevents invalid types and excessive tag counts.
+- **Tombstone design**: Deletes do NOT remove the entity from the lookup index. The lookup entry is preserved so that `history()` can still traverse the commit chain for deleted entities. All read paths (`load`, `list`, `count`) already check for `TOMBSTONE` and skip deleted entries. `rebuildLookupIndex()` cleans up stale lookup entries on demand.
+- **Pagination optimization (v2.12.0)**: `listEntitiesPaginated()` uses a two-pass approach — first counts alive entries by checking commit hashes (without loading objects), then loads only the requested page slice. Do NOT revert to single-pass which loads all objects into memory.
+- **Snapshot atomicity (v2.12.0)**: `SnapshotManager.create()` acquires a `LockGuard` during snapshot creation to prevent concurrent writes from corrupting the snapshot. The lock is passed via constructor.
+- **Consolidation idempotency (v2.12.0)**: All consolidation pipelines (`ConsolidationPipeline`, `SkillConsolidationPipeline`, `KnowledgeConsolidationPipeline`) use `saveOrUpdate()` instead of plain `save()` to prevent duplicates on repeated consolidation runs.
+- **Import dedup (v2.12.0)**: `importData()` pre-validates all entities and detects duplicate entity IDs within the import data before saving. Prevents silently overwriting earlier entities in the same import batch.
+- **Session message validation (v2.12.0)**: The MCP `session_save` tool validates `messages[]` structure — each element must have `role` (non-empty string) and `content` (string) fields.
+- **HTTP graceful shutdown (v2.12.0)**: The HTTP server handles `SIGTERM` and `SIGINT` signals — flushes pending data, closes connections, and exits cleanly. 5-second forced shutdown timeout.
 
 ### Key conventions
 

@@ -16,6 +16,12 @@ const VERSION = '2';
 /** Maximum content size in bytes (1 MB). Prevents DoS via oversized entities. */
 const MAX_CONTENT_SIZE = 1_048_576;
 
+/** Valid entity types */
+const VALID_ENTITY_TYPES: ReadonlySet<string> = new Set(['memory', 'skill', 'knowledge', 'session', 'profile']);
+
+/** Maximum tags per entity */
+const MAX_TAGS = 50;
+
 export class StorageEngine {
   readonly objects: ObjectStore;
   readonly commits: CommitStore;
@@ -91,6 +97,10 @@ export class StorageEngine {
   }
 
   private validateEntity(entity: Entity): void {
+    // Validate entity type
+    if (!entity.type || !VALID_ENTITY_TYPES.has(entity.type)) {
+      throw new RepoMemoryError('INVALID_INPUT', `Invalid entity type: ${entity.type}`);
+    }
     this.validateId(entity.id, 'id');
     if ('agentId' in entity) this.validateId((entity as { agentId: string }).agentId, 'agentId');
     if ('userId' in entity && (entity as { userId: string }).userId) {
@@ -101,6 +111,13 @@ export class StorageEngine {
       const contentLen = Buffer.byteLength((entity as { content: string }).content, 'utf8');
       if (contentLen > MAX_CONTENT_SIZE) {
         throw new RepoMemoryError('INVALID_INPUT', `Content too large: ${contentLen} bytes (max ${MAX_CONTENT_SIZE})`);
+      }
+    }
+    // Cap tags array to prevent excessive tag counts
+    if ('tags' in entity && Array.isArray((entity as { tags: unknown[] }).tags)) {
+      const tags = (entity as { tags: unknown[] }).tags;
+      if (tags.length > MAX_TAGS) {
+        throw new RepoMemoryError('INVALID_INPUT', `Too many tags: ${tags.length} (max ${MAX_TAGS})`);
       }
     }
   }
@@ -149,6 +166,10 @@ export class StorageEngine {
       }
       const commit = this.commits.create(existingRef.head, TOMBSTONE, author, `delete ${entity.type}`);
       this.refs.set(refPath, commit.hash);  // point ref to tombstone commit
+      // Note: lookup entry is intentionally preserved so that history() can still
+      // traverse the commit chain for deleted entities. All read paths (load, list,
+      // count) already check for TOMBSTONE and skip deleted entries.
+      // rebuildLookupIndex() cleans up stale lookup entries on demand.
       this.audit.append({
         operation: 'delete',
         entityType: entity.type,
@@ -204,21 +225,25 @@ export class StorageEngine {
   listEntitiesPaginated(type: EntityType, agentId: string, userId: string | undefined, limit: number, offset: number): { items: Entity[]; total: number } {
     const scope = this.buildScope(type, agentId, userId);
     const entries = [...this.lookup.list(scope)];
-    const alive: Entity[] = [];
+    // Two-pass approach: first count alive + collect object hashes (no object load),
+    // then load only the requested page to avoid OOM on large datasets.
+    const aliveHashes: string[] = [];
     for (const [, refPath] of entries) {
       const ref = this.refs.get(refPath);
       if (!ref) continue;
       const commit = this.commits.read(ref.head);
       if (commit.objectHash === TOMBSTONE) continue;
-      alive.push(this.objects.read(commit.objectHash).data as Entity);
+      aliveHashes.push(commit.objectHash);
     }
-    const total = alive.length;
-    const items = alive.slice(offset, offset + limit);
+    const total = aliveHashes.length;
+    const pageHashes = aliveHashes.slice(offset, offset + limit);
+    const items: Entity[] = pageHashes.map(hash => this.objects.read(hash).data as Entity);
     return { items, total };
   }
 
   listEntitiesByPrefix(prefix: string, maxResults = 10_000): Entity[] {
-    const entries = this.lookup.listByPrefix(prefix);
+    // Pass generous cap to lookup layer to avoid loading unbounded entries into memory
+    const entries = this.lookup.listByPrefix(prefix, maxResults * 2);
     const entities: Entity[] = [];
     for (const [, refPath] of entries) {
       if (entities.length >= maxResults) break;

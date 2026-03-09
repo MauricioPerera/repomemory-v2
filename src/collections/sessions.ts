@@ -38,14 +38,16 @@ export class SessionCollection extends BaseCollection<Session> {
     agentId: string,
     userId: string,
     options?: { limit?: number; offset?: number },
-  ): { items: Array<{ conversationId: string; count: number; latest: string }>; total: number; hasMore: boolean } {
+  ): { items: Array<{ conversationId: string; count: number; latest: string }>; total: number; hasMore: boolean; truncated?: boolean } {
     const limit = options?.limit ?? 50;
     const offset = options?.offset ?? 0;
     // Use paginated listing to avoid loading all sessions when possible.
     // We must scan enough sessions to build complete conversation groups,
     // so we use a bounded scan (max 5000 sessions) to prevent OOM.
     const MAX_SCAN = 5000;
-    const { items: sessions } = this.listPaginated(agentId, userId, { limit: MAX_SCAN, offset: 0 });
+    const { items: sessions, total: totalSessions } = this.listPaginated(agentId, userId, { limit: MAX_SCAN, offset: 0 });
+    // Detect when scan was truncated — totals may be inaccurate
+    const truncated = totalSessions > MAX_SCAN;
     const groups = new Map<string, { count: number; latest: string }>();
     for (const s of sessions) {
       if (!s.conversationId) continue;
@@ -62,7 +64,7 @@ export class SessionCollection extends BaseCollection<Session> {
       .sort((a, b) => b.latest.localeCompare(a.latest));
     const total = sorted.length;
     const items = sorted.slice(offset, offset + limit);
-    return { items, total, hasMore: offset + limit < total };
+    return { items, total, hasMore: offset + limit < total, ...(truncated ? { truncated } : {}) };
   }
 
   protected searchScope(agentId: string, userId?: string): string {

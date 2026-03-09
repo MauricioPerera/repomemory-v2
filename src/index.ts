@@ -2,6 +2,7 @@ import { StorageEngine } from './storage/engine.js';
 import { SearchEngine } from './search/search-engine.js';
 import { SnapshotManager } from './storage/snapshot.js';
 import { AccessTracker } from './storage/access-tracker.js';
+import { LockGuard } from './storage/lockfile.js';
 import { MemoryCollection } from './collections/memories.js';
 import { SkillCollection } from './collections/skills.js';
 import { KnowledgeCollection } from './collections/knowledge.js';
@@ -41,9 +42,12 @@ export class RepoMemory {
 
   constructor(config: RepoMemoryConfig) {
     this.config = config;
-    this.storage = new StorageEngine(config.dir, config.lockEnabled ?? true);
+    const lockEnabled = config.lockEnabled ?? true;
+    this.storage = new StorageEngine(config.dir, lockEnabled);
     this.searchEngine = new SearchEngine(config.dir);
-    this.snapshots = new SnapshotManager(config.dir);
+    // Pass a LockGuard to SnapshotManager so snapshots are created atomically
+    const snapshotLock = new LockGuard(config.dir, lockEnabled);
+    this.snapshots = new SnapshotManager(config.dir, snapshotLock);
     this.accessTracker = new AccessTracker(config.dir);
     this.ai = config.ai;
     this.events = new RepoMemoryEventBus();

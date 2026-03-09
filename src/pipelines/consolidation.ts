@@ -113,7 +113,7 @@ export class ConsolidationPipeline extends BaseConsolidationPipeline<Memory> {
   }
 
   protected saveMerged(agentId: string, userId: string | undefined, merged: ConsolidationPlan['merge'][number]['merged']): void {
-    this.repo.memories.save(agentId, userId, {
+    this.repo.memories.saveOrUpdate(agentId, userId, {
       content: merged.content,
       tags: merged.tags,
       category: merged.category as Memory['category'],
@@ -152,7 +152,7 @@ export class SkillConsolidationPipeline extends BaseConsolidationPipeline<Skill>
   }
 
   protected saveMerged(agentId: string, _userId: string | undefined, merged: ConsolidationPlan['merge'][number]['merged']): void {
-    this.repo.skills.save(agentId, undefined, {
+    this.repo.skills.saveOrUpdate(agentId, {
       content: merged.content,
       tags: merged.tags,
       category: merged.category ?? 'procedure',
@@ -192,7 +192,7 @@ export class KnowledgeConsolidationPipeline extends BaseConsolidationPipeline<Kn
   }
 
   protected saveMerged(agentId: string, _userId: string | undefined, merged: ConsolidationPlan['merge'][number]['merged']): void {
-    this.repo.knowledge.save(agentId, undefined, {
+    this.repo.knowledge.saveOrUpdate(agentId, {
       content: merged.content,
       tags: merged.tags,
     });

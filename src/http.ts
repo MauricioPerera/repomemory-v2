@@ -81,7 +81,7 @@ const server = createServer(async (req, res) => {
 
     // GET /health — health check
     if (url === '/health' && req.method === 'GET') {
-      jsonResponse(res, 200, { status: 'ok', dir, version: '2.11.0' });
+      jsonResponse(res, 200, { status: 'ok', dir, version: '2.12.0' });
       return;
     }
 
@@ -168,6 +168,24 @@ const server = createServer(async (req, res) => {
     }
   }
 });
+
+// Graceful shutdown: flush data and close connections on SIGTERM/SIGINT
+function gracefulShutdown(signal: string): void {
+  process.stderr.write(`\n${signal} received. Shutting down gracefully...\n`);
+  mem.flush();
+  server.close(() => {
+    process.stderr.write('HTTP server closed.\n');
+    process.exit(0);
+  });
+  // Force close after 5 seconds if connections are still open
+  setTimeout(() => {
+    process.stderr.write('Forced shutdown after timeout.\n');
+    process.exit(1);
+  }, 5000).unref();
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 server.listen(port, () => {
   process.stderr.write(`RepoMemory HTTP server listening on http://localhost:${port}\n`);

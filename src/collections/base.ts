@@ -12,6 +12,9 @@ import { RepoMemoryError } from '../types/errors.js';
 import type { RepoMemoryEventBus } from '../events.js';
 import type { MiddlewareChain } from '../middleware.js';
 
+/** Maximum search result limit to prevent DoS via excessive limit values */
+const MAX_SEARCH_LIMIT = 200;
+
 /** Extract agentId from any entity without double-casting */
 function entityAgentId(entity: Entity): string {
   return (entity as { agentId: string }).agentId;
@@ -221,20 +224,22 @@ export abstract class BaseCollection<T extends Entity> {
   }
 
   find(agentId: string, userId: string | undefined, query: string, limit = 10): SearchResult<T>[] {
+    const cappedLimit = Math.min(Math.max(1, limit), MAX_SEARCH_LIMIT);
     this.searchEngine.flush(); // ensure pending index updates are applied before searching
     const scope = this.searchScope(agentId, userId);
     const expanded = expandQuery(query);
-    const ranked = this.searchEngine.rank(scope, expanded, limit * 3);
+    const ranked = this.searchEngine.rank(scope, expanded, cappedLimit * 3);
     const queryTags = expanded.toLowerCase().split(/\s+/).filter(t => t.length > 1);
-    return this.scoreAndRank(ranked, queryTags, limit);
+    return this.scoreAndRank(ranked, queryTags, cappedLimit);
   }
 
   findMultiScope(scopes: string[], query: string, limit = 10): SearchResult<T>[] {
+    const cappedLimit = Math.min(Math.max(1, limit), MAX_SEARCH_LIMIT);
     this.searchEngine.flush();
     const expanded = expandQuery(query);
-    const ranked = this.searchEngine.rankMultiScope(scopes, expanded, limit * 3);
+    const ranked = this.searchEngine.rankMultiScope(scopes, expanded, cappedLimit * 3);
     const queryTags = expanded.toLowerCase().split(/\s+/).filter(t => t.length > 1);
-    return this.scoreAndRank(ranked, queryTags, limit);
+    return this.scoreAndRank(ranked, queryTags, cappedLimit);
   }
 
   history(entityId: string): CommitInfo[] {

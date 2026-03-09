@@ -791,6 +791,23 @@ The TF-IDF index is cached to disk and updated incrementally — no full rebuild
 
 ## Changelog
 
+### v2.12.0
+
+**Robustness & Safety Hardening**
+
+- **Pagination optimization**: `listEntitiesPaginated()` uses a two-pass approach — counts alive entries without loading objects, then loads only the requested page. Prevents OOM on large datasets.
+- **Search limit cap**: `find()` and `findMultiScope()` clamp `limit` to `MAX_SEARCH_LIMIT` (200). Prevents DoS via excessive limit values.
+- **Entity type validation**: `StorageEngine.validateEntity()` validates entity type against a whitelist. Rejects invalid types before they reach storage.
+- **Tags cap**: Entities are limited to 50 tags maximum. Prevents excessive tag counts from degrading search performance.
+- **Lookup prefix bounding**: `LookupIndex.listByPrefix()` accepts optional `maxResults` parameter. `listEntitiesByPrefix()` passes a bounded cap to prevent unbounded lookup iteration.
+- **Snapshot atomicity**: `SnapshotManager.create()` acquires a `LockGuard` during snapshot creation. Prevents concurrent writes from corrupting snapshots.
+- **Truncated conversations flag**: `listConversations()` returns `truncated: true` when the `MAX_SCAN` limit truncates results. Consumers can detect incomplete totals.
+- **Session message validation**: MCP `session_save` tool validates `messages[]` structure — each element must have `role` (non-empty string) and `content` (string) fields.
+- **Consolidation idempotency**: All consolidation pipelines (`memories`, `skills`, `knowledge`) now use `saveOrUpdate()` instead of plain `save()`. Running consolidation multiple times no longer creates duplicates.
+- **Import dedup detection**: `importData()` pre-validates all entities and detects duplicate entity IDs within the import data. Prevents silently overwriting earlier entities in the same import batch.
+- **HTTP graceful shutdown**: The HTTP server handles `SIGTERM`/`SIGINT` — flushes pending data, closes connections, exits cleanly with 5-second forced shutdown timeout.
+- **Version bumps**: `package.json`, MCP `SERVER_INFO`, HTTP `/health` endpoint all report `2.12.0`.
+
 ### v2.11.0
 
 **Scalability & Security Hardening**

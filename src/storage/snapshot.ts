@@ -4,16 +4,19 @@ import { randomBytes } from 'node:crypto';
 import type { SnapshotInfo } from '../types/results.js';
 import { RepoMemoryError } from '../types/errors.js';
 import { safeJsonParse, safeJsonStringify } from '../serialization/json.js';
+import type { LockGuard } from './lockfile.js';
 
 export class SnapshotManager {
   private readonly dir: string;
   private readonly baseDir: string;
   private readonly lockPath: string;
+  private readonly lockGuard?: LockGuard;
 
-  constructor(baseDir: string) {
+  constructor(baseDir: string, lockGuard?: LockGuard) {
     this.baseDir = baseDir;
     this.dir = join(baseDir, 'snapshots');
     this.lockPath = join(baseDir, '.restore.lock');
+    this.lockGuard = lockGuard;
   }
 
   init(): void {
@@ -21,30 +24,35 @@ export class SnapshotManager {
   }
 
   create(label: string): SnapshotInfo {
-    const id = `snap-${Date.now().toString(36)}-${randomBytes(3).toString('hex')}`;
-    const snapDir = join(this.dir, id);
-    mkdirSync(snapDir, { recursive: true });
+    const doCreate = (): SnapshotInfo => {
+      const id = `snap-${Date.now().toString(36)}-${randomBytes(3).toString('hex')}`;
+      const snapDir = join(this.dir, id);
+      mkdirSync(snapDir, { recursive: true });
 
-    // Copy refs, index, objects, commits, VERSION
-    for (const sub of ['refs', 'index', 'objects', 'commits', 'VERSION']) {
-      const src = join(this.baseDir, sub);
-      if (existsSync(src)) {
-        cpSync(src, join(snapDir, sub), { recursive: true });
+      // Copy refs, index, objects, commits, VERSION
+      for (const sub of ['refs', 'index', 'objects', 'commits', 'VERSION']) {
+        const src = join(this.baseDir, sub);
+        if (existsSync(src)) {
+          cpSync(src, join(snapDir, sub), { recursive: true });
+        }
       }
-    }
 
-    // Count refs
-    const refsDir = join(snapDir, 'refs');
-    const refCount = existsSync(refsDir) ? this.countFiles(refsDir) : 0;
+      // Count refs
+      const refsDir = join(snapDir, 'refs');
+      const refCount = existsSync(refsDir) ? this.countFiles(refsDir) : 0;
 
-    const info: SnapshotInfo = {
-      id,
-      label,
-      timestamp: new Date().toISOString(),
-      refCount,
+      const info: SnapshotInfo = {
+        id,
+        label,
+        timestamp: new Date().toISOString(),
+        refCount,
+      };
+      writeFileSync(join(snapDir, 'snapshot.json'), safeJsonStringify(info, true), 'utf8');
+      return info;
     };
-    writeFileSync(join(snapDir, 'snapshot.json'), safeJsonStringify(info, true), 'utf8');
-    return info;
+
+    // Acquire write lock during snapshot to prevent concurrent writes from corrupting the snapshot
+    return this.lockGuard ? this.lockGuard.withLock(doCreate) : doCreate();
   }
 
   private acquireLock(): void {

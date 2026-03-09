@@ -51,7 +51,7 @@ export class LookupIndex {
     return new Map(this.getScope(scope));
   }
 
-  listByPrefix(prefix: string): Map<string, string> {
+  listByPrefix(prefix: string, maxResults?: number): Map<string, string> {
     const result = new Map<string, string>();
     const files = this.listScopeFiles();
     for (const scope of files) {
@@ -59,6 +59,7 @@ export class LookupIndex {
       const map = this.getScope(scope);
       for (const [id, ref] of map) {
         result.set(id, ref);
+        if (maxResults !== undefined && result.size >= maxResults) return result;
       }
     }
     return result;

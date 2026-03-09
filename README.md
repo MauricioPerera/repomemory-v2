@@ -34,8 +34,9 @@ RepoMemory provides persistent, versioned memory for AI agents. Every change is 
 - **Compact prompts** — configurable prompt strategy optimized for small reasoning models (<3B params)
 - **Library + CLI + MCP + HTTP** — import as a TypeScript library, use from the command line, or connect via MCP/HTTP
 - **Content size limit** — 1 MB max per entity content, enforced via `Buffer.byteLength` to prevent DoS
-- **Input validation** — entity/agent/user IDs validated against path traversal (`/`, `\`, `..`, `:`, `\0`)
-- **Bounded queries** — paginated `listConversations()`, capped `getByUserAcrossAgents()`, bounded `listEntitiesByPrefix()`
+- **Input validation** — entity/agent/user IDs validated against path traversal (`/`, `\`, `..`, `:`, `\0`); entity types checked against whitelist; tags capped at 50 per entity
+- **Bounded queries** — paginated `listConversations()`, capped `getByUserAcrossAgents()`, bounded `listEntitiesByPrefix()`, search limit clamped to 200
+- **Graceful shutdown** — HTTP server handles `SIGTERM`/`SIGINT` with flush + 5-second forced timeout
 - **Cross-platform** — works on Windows, macOS, and Linux
 
 ## Install
@@ -961,7 +962,7 @@ npm run build        # Build ESM + .d.ts + sourcemaps (tsup)
 
 ### Running Tests
 
-Tests use temporary directories and clean up after themselves. ~345 tests across 30 files:
+Tests use temporary directories and clean up after themselves. ~335 tests across 29 files:
 
 - **Unit tests**: tokenizer, TF-IDF, scoring, JSON serialization, CLI parser
 - **Storage tests**: object store, commit store, ref store, engine, snapshots
@@ -973,6 +974,7 @@ Tests use temporary directories and clean up after themselves. ~345 tests across
 - **v2.5 feature tests**: MCP handler, auto-mining, portability (13), middleware (15), CLI commands (8), HTTP API (11)
 - **v2.10 security tests**: path traversal prevention, restore locks, history depth limits, scope encoding, knowledge dedup source check, snapshot validation, HTTP size limits
 - **v2.11 scalability tests**: scope encoding collision prevention (2), content size limits (4), conversation pagination (3), profile cross-agent limits (3), prefix scan bounds (2)
+- **v2.12 hardening**: no new test files — all changes are internal robustness improvements validated by existing tests
 - **Benchmarks**: save/saveMany throughput, search latency
 
 ```bash

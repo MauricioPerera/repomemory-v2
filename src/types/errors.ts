@@ -10,7 +10,9 @@ export type ErrorCode =
   | 'PARSE_ERROR'
   | 'MIDDLEWARE_CANCELLED'
   | 'RAG_LOAD_ERROR'
-  | 'RAG_INGEST_ERROR';
+  | 'RAG_INGEST_ERROR'
+  | 'NEURAL_NOT_READY'
+  | 'NEURAL_ERROR';
 
 export class RepoMemoryError extends Error {
   constructor(

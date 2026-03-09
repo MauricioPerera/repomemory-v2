@@ -22,6 +22,7 @@ import type { RecallContext, RecallOptions } from './types/results.js';
 import { RepoMemoryError } from './types/errors.js';
 import { MiddlewareChain } from './middleware.js';
 import type { Middleware } from './middleware.js';
+import type { NeuralEngine } from './neural/index.js';
 
 export class RepoMemory {
   readonly memories: MemoryCollection;
@@ -39,6 +40,8 @@ export class RepoMemory {
   private readonly ai?: AiProvider;
   private readonly middlewareChain: MiddlewareChain;
   private autoMineHandler?: EventHandler<'entity:save'>;
+  private _neural?: NeuralEngine;
+  private _neuralInitPromise?: Promise<boolean>;
 
   constructor(config: RepoMemoryConfig) {
     this.config = config;
@@ -89,6 +92,37 @@ export class RepoMemory {
       };
       this.events.on('entity:save', this.autoMineHandler);
     }
+
+    // Neural engine lazy-init (if configured)
+    if (config.neural?.enabled) {
+      this._neuralInitPromise = this.initNeural(config);
+    }
+  }
+
+  /** Lazy-load and wire the neural engine */
+  private async initNeural(config: RepoMemoryConfig): Promise<boolean> {
+    try {
+      const { NeuralEngine: NE } = await import('./neural/index.js');
+      const neural = new NE(config.dir, config.neural!);
+      const ready = await neural.ensureReady();
+      if (ready) {
+        this._neural = neural;
+        // Wire to scorable collections
+        const scorableCollections = [this.memories, this.skills, this.knowledge];
+        for (const col of scorableCollections) {
+          col.setNeuralEngine(neural);
+        }
+        this.events.emit('neural:ready', { modelId: neural.stats().modelId });
+      } else {
+        const errMsg = neural.lastError?.message ?? 'Unknown error';
+        this.events.emit('neural:error', { error: errMsg });
+      }
+      return ready;
+    } catch (e) {
+      const errMsg = e instanceof Error ? e.message : String(e);
+      this.events.emit('neural:error', { error: errMsg });
+      return false;
+    }
   }
 
   on<K extends EventName>(event: K, handler: EventHandler<K>): void {
@@ -103,9 +137,29 @@ export class RepoMemory {
     this.middlewareChain.use(middleware);
   }
 
+  /** Neural engine instance (null if not configured or not yet ready) */
+  get neural(): NeuralEngine | null {
+    return this._neural ?? null;
+  }
+
+  /**
+   * Ensure the neural engine is loaded and ready.
+   * Returns true if ready, false if not configured or loading failed.
+   * Safe to call multiple times — returns cached promise.
+   */
+  async ensureNeural(): Promise<boolean> {
+    if (this._neural?.isReady) return true;
+    if (this._neuralInitPromise) return this._neuralInitPromise;
+    if (!this.config.neural?.enabled) return false;
+    // Re-attempt initialization
+    this._neuralInitPromise = this.initNeural(this.config);
+    return this._neuralInitPromise;
+  }
+
   flush(): void {
     this.searchEngine.flush();
     this.accessTracker.flush();
+    if (this._neural) this._neural.flush();
   }
 
   /** Clean up event listeners and flush pending data. Call when discarding the instance. */
@@ -286,3 +340,4 @@ export type { CleanupOptions, CleanupReport } from './cleanup.js';
 export type { ExportData, ImportOptions, ImportReport } from './portability.js';
 export type { Middleware } from './middleware.js';
 export type { ScoringWeights } from './search/scoring.js';
+export type { NeuralConfig, NeuralStats, MatryoshkaEmbedding, CuratedItem, SimilarityResult } from './neural/types.js';

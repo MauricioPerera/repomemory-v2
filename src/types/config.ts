@@ -1,5 +1,6 @@
 import type { AiProvider } from './ai.js';
 import type { ScoringWeights } from '../search/scoring.js';
+import type { NeuralConfig } from '../neural/types.js';
 
 export interface RepoMemoryConfig {
   dir: string;
@@ -14,4 +15,6 @@ export interface RepoMemoryConfig {
   autoMine?: boolean;
   /** Use compact prompts optimized for small models (<3B params). Default: auto-detect (true for Ollama, false otherwise) */
   compactPrompts?: boolean;
+  /** Neural embedding engine configuration. Requires @huggingface/transformers (optional peer dependency). */
+  neural?: NeuralConfig;
 }

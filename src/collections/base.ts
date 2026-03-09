@@ -25,10 +25,18 @@ function entityUserId(entity: Entity): string | undefined {
   return 'userId' in entity ? (entity as { userId: string }).userId : undefined;
 }
 
+/** Interface for neural engine to avoid importing the full module */
+interface NeuralIndexer {
+  isReady: boolean;
+  index(scope: string, entityId: string, content: string): Promise<void>;
+  remove(scope: string, entityId: string): boolean;
+}
+
 export abstract class BaseCollection<T extends Entity> {
   protected eventBus?: RepoMemoryEventBus;
   protected scoringWeights?: ScoringWeights;
   protected middlewareChain?: MiddlewareChain;
+  protected neuralEngine?: NeuralIndexer;
 
   constructor(
     protected readonly storage: StorageEngine,
@@ -47,6 +55,11 @@ export abstract class BaseCollection<T extends Entity> {
 
   setMiddleware(chain: MiddlewareChain): void {
     this.middlewareChain = chain;
+  }
+
+  /** Set the optional neural engine for automatic embedding indexing on save/update/delete */
+  setNeuralEngine(engine: NeuralIndexer): void {
+    this.neuralEngine = engine;
   }
 
   protected abstract buildEntity(id: string, agentId: string, userId: string | undefined, input: Record<string, unknown>): T;
@@ -68,7 +81,9 @@ export abstract class BaseCollection<T extends Entity> {
       entity = result as T;
     }
     const commit = this.storage.save(entity);
-    this.searchEngine.indexEntity(this.searchScope(agentId, userId), entity);
+    const scope = this.searchScope(agentId, userId);
+    this.searchEngine.indexEntity(scope, entity);
+    this.neuralIndex(scope, entity);
     if (this.eventBus) this.eventBus.emit('entity:save', { entity, commit });
     return [entity, commit];
   }
@@ -89,7 +104,9 @@ export abstract class BaseCollection<T extends Entity> {
         entity = result as T;
       }
       const commit = this.storage.save(entity);
-      this.searchEngine.indexEntity(this.searchScope(agentId, userId), entity);
+      const scope = this.searchScope(agentId, userId);
+      this.searchEngine.indexEntity(scope, entity);
+      this.neuralIndex(scope, entity);
       results.push([entity, commit]);
       if (this.eventBus) this.eventBus.emit('entity:save', { entity, commit });
     }
@@ -114,7 +131,9 @@ export abstract class BaseCollection<T extends Entity> {
     const commit = this.storage.save(updated);
     const agentId = entityAgentId(updated);
     const userId = entityUserId(updated);
-    this.searchEngine.indexEntity(this.searchScope(agentId, userId), updated);
+    const scope = this.searchScope(agentId, userId);
+    this.searchEngine.indexEntity(scope, updated);
+    this.neuralIndex(scope, updated);
     if (this.eventBus) this.eventBus.emit('entity:update', { entity: updated, commit });
     return [updated, commit];
   }
@@ -138,7 +157,9 @@ export abstract class BaseCollection<T extends Entity> {
     }
     const agentId = entityAgentId(entity);
     const userId = entityUserId(entity);
-    this.searchEngine.removeEntity(this.searchScope(agentId, userId), entityId);
+    const scope = this.searchScope(agentId, userId);
+    this.searchEngine.removeEntity(scope, entityId);
+    if (this.neuralEngine) this.neuralEngine.remove(scope, entityId);
     if (this.accessTracker) {
       this.accessTracker.remove(entityId);
     }
@@ -155,7 +176,9 @@ export abstract class BaseCollection<T extends Entity> {
       if (this.middlewareChain && !this.middlewareChain.runBeforeDelete(entityId, this.entityType)) continue;
       const agentId = entityAgentId(entity);
       const userId = entityUserId(entity);
-      this.searchEngine.removeEntity(this.searchScope(agentId, userId), entityId);
+      const scope = this.searchScope(agentId, userId);
+      this.searchEngine.removeEntity(scope, entityId);
+      if (this.neuralEngine) this.neuralEngine.remove(scope, entityId);
       if (this.accessTracker) this.accessTracker.remove(entityId);
       const commit = this.storage.delete(entity);
       if (this.eventBus) this.eventBus.emit('entity:delete', { entityId, entityType: this.entityType, commit });
@@ -251,5 +274,15 @@ export abstract class BaseCollection<T extends Entity> {
     const ts = Date.now().toString(36);
     const rand = randomBytes(3).toString('hex');
     return `${this.entityType}-${ts}-${rand}`;
+  }
+
+  /** Fire-and-forget neural indexing. Does not block save/update path. */
+  private neuralIndex(scope: string, entity: T): void {
+    if (!this.neuralEngine?.isReady) return;
+    const content = 'content' in entity ? String((entity as { content: string }).content) : '';
+    if (!content) return;
+    this.neuralEngine.index(scope, entity.id, content).catch(() => {
+      // Silently ignore — neural indexing is best-effort
+    });
   }
 }

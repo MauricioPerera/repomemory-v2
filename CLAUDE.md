@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-npm run build        # Build ESM + .d.ts + sourcemaps (tsup, 5 entry points)
+npm run build        # Build ESM + .d.ts + sourcemaps (tsup, 7 entry points)
 npm run typecheck    # TypeScript strict check (tsc --noEmit)
 npm test             # Run all tests (vitest)
 npx vitest run tests/search          # Run tests in a directory
@@ -17,14 +17,15 @@ npx vitest --watch                   # Watch mode
 
 RepoMemory is a Git-inspired persistent memory system for AI agents. Zero runtime dependencies — only `node:fs`, `node:path`, `node:crypto`, and `fetch`. ESM-only (`"type": "module"`).
 
-### Six build entry points (tsup)
+### Seven build entry points (tsup)
 
 1. `src/index.ts` → `dist/index.js` — Core library
 2. `src/ai/index.ts` → `dist/ai/index.js` — AI providers (sub-export `repomemory/ai`)
 3. `src/rag/index.ts` → `dist/rag/index.js` — RAG pipeline (sub-export `repomemory/rag`)
-4. `src/cli.ts` → `dist/cli.js` — CLI binary (`repomemory`)
-5. `src/mcp.ts` → `dist/mcp.js` — MCP server binary (`repomemory-mcp`)
-6. `src/http.ts` → `dist/http.js` — HTTP API binary (`repomemory-http`)
+4. `src/neural/index.ts` → `dist/neural/index.js` — Neural engine (sub-export `repomemory/neural`)
+5. `src/cli.ts` → `dist/cli.js` — CLI binary (`repomemory`)
+6. `src/mcp.ts` → `dist/mcp.js` — MCP server binary (`repomemory-mcp`)
+7. `src/http.ts` → `dist/http.js` — HTTP API binary (`repomemory-http`)
 
 ### Core data flow: Git-like storage
 
@@ -46,8 +47,9 @@ Deletes create a **tombstone commit** (`objectHash: "TOMBSTONE"`). The ref still
 - **`SearchEngine`** (`src/search/search-engine.ts`) — Manages scoped TF-IDF indices. Each `type:agentId:userId` combination has its own index, serialized to disk.
 - **`RecallEngine`** (`src/recall/engine.ts`) — Score-based multi-collection query. Pools all results and takes top N by composite score.
 - **`MiddlewareChain`** (`src/middleware.ts`) — Ordered beforeSave/beforeUpdate/beforeDelete hooks. Short-circuits on null/false.
-- **`MCP handler`** (`src/mcp/handler.ts`) — 27 tools, JSON-RPC dispatch. Shared by both MCP and HTTP servers.
+- **`MCP handler`** (`src/mcp/handler.ts`) — 31 tools, JSON-RPC dispatch. Shared by both MCP and HTTP servers.
 - **`RAG Pipeline`** (`src/rag/`) — Document ingestion (chunker, loader, ingest), query with optional AI answers, incremental sync via SHA-256 hashing. Lazy-loaded from facade.
+- **`NeuralEngine`** (`src/neural/`) — Optional semantic search via EmbeddingGemma-300m (Matryoshka multi-resolution ranking). Lazy-loaded from facade. Requires `@huggingface/transformers` (optional peer dep).
 - **`Portability`** (`src/portability.ts`) — Export/import of all entities + access counts as portable JSON.
 
 ### Scoping model
@@ -60,7 +62,19 @@ Lookup index filenames use `encodeURIComponent` because `:` is invalid on Window
 
 ### Search pipeline
 
-Query → synonym expansion (`query-expander.ts`) → tokenize + stopwords → Porter stem → TF-IDF rank → composite score (TF-IDF weight + Jaccard tag overlap + time decay + capped access boost).
+Query → synonym expansion (`query-expander.ts`) → tokenize + stopwords → Porter stem → TF-IDF rank → composite score (TF-IDF weight + Jaccard tag overlap + optional neural embedding score + time decay + capped access boost).
+
+### Neural pipeline (v2.15.0)
+
+Optional semantic search via `@huggingface/transformers` (EmbeddingGemma-300m, 308M params, ONNX q8). Enable with `neural: { enabled: true }` in config.
+
+- **Matryoshka 3-level pyramid**: 128-dim coarse scan → 256-dim re-rank → 768-dim precise ranking. ~6× faster than full-dim brute force.
+- **Storage**: JSON manifest + binary Float32 per scope in `index/embeddings/`. LRU eviction (max 50 loaded scopes).
+- **Auto-indexing**: `save()`/`update()` fire-and-forget `neuralEngine.index()` — never blocks the sync write path.
+- **MCP tools**: `neural_status`, `neural_index`, `neural_search`, `neural_similarity`.
+- **find() stays synchronous**: Neural augmentation at MCP/recall level only, not in BaseCollection.
+- **Cross-lingual**: EmbeddingGemma supports 100+ languages. A Spanish memory matches an English query.
+- **MMR diversity**: `ContextCurator` applies Maximal Marginal Relevance (λ=0.7) to prevent near-duplicate context.
 
 ### Performance model
 
@@ -84,6 +98,10 @@ Query → synonym expansion (`query-expander.ts`) → tokenize + stopwords → P
 - **Import dedup (v2.12.0)**: `importData()` pre-validates all entities and detects duplicate entity IDs within the import data before saving. Prevents silently overwriting earlier entities in the same import batch.
 - **Session message validation (v2.12.0)**: The MCP `session_save` tool validates `messages[]` structure — each element must have `role` (non-empty string) and `content` (string) fields.
 - **HTTP graceful shutdown (v2.12.0)**: The HTTP server handles `SIGTERM` and `SIGINT` signals — flushes pending data, closes connections, and exits cleanly. 5-second forced shutdown timeout.
+- **Neural optional peer dependency (v2.15.0)**: `@huggingface/transformers` is never statically imported. Only `embedder.ts` uses `await import()`. If not installed, `ensureReady()` returns false and all neural features degrade gracefully. Type declarations in `src/neural/hf-transformers.d.ts`.
+- **Neural fire-and-forget indexing (v2.15.0)**: `BaseCollection.neuralIndex()` calls `engine.index().catch(() => {})` — embedding computation (~10-50ms) never blocks the synchronous save path. Do NOT make neural indexing synchronous or awaited.
+- **Neural store binary format (v2.15.0)**: `EmbeddingStore` uses JSON manifest (`ids[]`) + contiguous Float32 binary file per scope. Scope paths use same encoding as SearchEngine. Do NOT add per-entity files.
+- **Neural scoring integration (v2.15.0)**: `computeScore()` normalizes weights to sum to 1.0 when `embeddingScore` is provided. When `embeddingWeight=0` (default), the formula is **mathematically identical** to pre-neural behavior. Do NOT change the normalization logic.
 
 ### Key conventions
 
@@ -92,5 +110,5 @@ Query → synonym expansion (`query-expander.ts`) → tokenize + stopwords → P
 - TypeScript strict mode with `noUnusedLocals` and `noUnusedParameters`
 - Tests use temp directories and clean up after themselves
 - Vitest globals are enabled (`describe`, `it`, `expect` without imports)
-- No vectors/embeddings by design — TF-IDF + AI mining replaces vector search
+- Optional neural embeddings via `@huggingface/transformers` — TF-IDF is the primary search, neural is additive
 - The project is private and model-agnostic — any LLM that can read/write should be able to interact with it

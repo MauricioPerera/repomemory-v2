@@ -40,4 +40,12 @@ export default defineConfig([
     banner: { js: '#!/usr/bin/env node' },
     sourcemap: true,
   },
+  {
+    entry: ['src/neural/index.ts'],
+    outDir: 'dist/neural',
+    format: ['esm'],
+    dts: true,
+    sourcemap: true,
+    external: ['@huggingface/transformers'],
+  },
 ]);

@@ -12,6 +12,9 @@ export interface RepoMemoryEvents {
   'rag:ingest:done': { agentId: string; filesProcessed: number; chunksIngested: number };
   'rag:query:done': { agentId: string; query: string; chunksUsed: number; hasAiAnswer: boolean };
   'rag:sync:done': { agentId: string; modified: number; deleted: number; newFiles: number };
+  'neural:ready': { modelId: string };
+  'neural:error': { error: string };
+  'neural:indexed': { scope: string; entityId: string };
 }
 
 export type EventName = keyof RepoMemoryEvents;

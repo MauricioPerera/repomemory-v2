@@ -6,6 +6,9 @@
 import type { RepoMemory } from '../index.js';
 import type { RecallOptions } from '../types/results.js';
 import { RepoMemoryError } from '../types/errors.js';
+import { scopeFromParts } from '../scoping.js';
+import { SHARED_AGENT_ID } from '../types/entities.js';
+import type { EntityType } from '../types/entities.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -402,6 +405,53 @@ export const tools: ToolDef[] = [
       required: ['agentId'],
     },
   },
+  // -- Neural --
+  {
+    name: 'neural_status',
+    description: 'Get neural engine status: model info, loaded state, index stats, memory usage. Returns { enabled: false } if neural is not configured.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'neural_index',
+    description: 'Batch-index all entities of a type for an agent into the neural embedding store. Use to build/rebuild the semantic index.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agentId: { type: 'string', description: 'Agent identifier' },
+        type: { type: 'string', enum: ['memory', 'skill', 'knowledge'], description: 'Entity type to index' },
+        userId: { type: 'string', description: 'User identifier (required for memories)' },
+      },
+      required: ['agentId', 'type'],
+    },
+  },
+  {
+    name: 'neural_search',
+    description: 'Semantic search via Matryoshka pyramid ranking. Bypasses TF-IDF — uses embedding similarity directly. Requires neural engine.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agentId: { type: 'string', description: 'Agent identifier' },
+        type: { type: 'string', enum: ['memory', 'skill', 'knowledge'], description: 'Entity type to search' },
+        query: { type: 'string', description: 'Natural language query (supports cross-lingual)' },
+        userId: { type: 'string', description: 'User identifier (required for memories)' },
+        limit: { type: 'number', description: 'Max results (default: 10)' },
+        includeShared: { type: 'boolean', description: 'Include shared skills/knowledge (default: false)' },
+      },
+      required: ['agentId', 'type', 'query'],
+    },
+  },
+  {
+    name: 'neural_similarity',
+    description: 'Compute semantic similarity between two texts. Returns a cosine similarity score (0 to 1). Requires neural engine.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        textA: { type: 'string', description: 'First text' },
+        textB: { type: 'string', description: 'Second text' },
+      },
+      required: ['textA', 'textB'],
+    },
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -675,6 +725,77 @@ export async function handleTool(mem: RepoMemory, name: string, args: Record<str
         totalKnowledge: all.length,
       };
     }
+
+    // Neural
+    case 'neural_status': {
+      const neural = mem.neural;
+      if (!neural) return { enabled: false };
+      return { enabled: true, ready: neural.isReady, ...neural.stats() };
+    }
+    case 'neural_index': {
+      const neural = mem.neural;
+      if (!neural?.isReady) {
+        throw new RepoMemoryError('NEURAL_NOT_READY', 'Neural engine not ready. Ensure neural is enabled and model is loaded.');
+      }
+      const agentId = requireString(args, 'agentId');
+      const type = requireString(args, 'type') as EntityType;
+      const userId = optionalString(args, 'userId');
+      if (type === 'memory' && !userId) {
+        throw new Error('userId is required when indexing memories');
+      }
+      const col = collectionFor(mem, type);
+      const entities = col.list(agentId, userId);
+      const scope = scopeFromParts(type, agentId, userId);
+      const items = entities
+        .filter(e => 'content' in e && typeof (e as { content: string }).content === 'string')
+        .map(e => ({ entityId: e.id, content: (e as { content: string }).content }));
+      const indexed = await neural.indexBatch(scope, items);
+      neural.flush();
+      return { indexed, scope, type, agentId };
+    }
+    case 'neural_search': {
+      const neural = mem.neural;
+      if (!neural?.isReady) {
+        throw new RepoMemoryError('NEURAL_NOT_READY', 'Neural engine not ready. Ensure neural is enabled and model is loaded.');
+      }
+      const agentId = requireString(args, 'agentId');
+      const type = requireString(args, 'type') as EntityType;
+      const query = requireString(args, 'query');
+      const userId = optionalString(args, 'userId');
+      const limit = optionalNumber(args, 'limit') ?? 10;
+      const includeShared = optionalBoolean(args, 'includeShared') ?? false;
+      if (type === 'memory' && !userId) {
+        throw new Error('userId is required when searching memories');
+      }
+      const scope = scopeFromParts(type, agentId, userId);
+      const scopes = [scope];
+      if (includeShared && (type === 'skill' || type === 'knowledge')) {
+        scopes.push(scopeFromParts(type, SHARED_AGENT_ID));
+      }
+      const results = scopes.length === 1
+        ? await neural.rank(scope, query, limit)
+        : await neural.rankMultiScope(scopes, query, limit);
+      // Hydrate with entities
+      const col = collectionFor(mem, type);
+      const hydrated = results
+        .map(r => {
+          const entity = col.get(r.entityId);
+          return entity ? { entity, score: r.score } : null;
+        })
+        .filter(Boolean);
+      return hydrated;
+    }
+    case 'neural_similarity': {
+      const neural = mem.neural;
+      if (!neural?.isReady) {
+        throw new RepoMemoryError('NEURAL_NOT_READY', 'Neural engine not ready. Ensure neural is enabled and model is loaded.');
+      }
+      const textA = requireString(args, 'textA');
+      const textB = requireString(args, 'textB');
+      const score = await neural.similarity(textA, textB);
+      return { textA, textB, similarity: score };
+    }
+
     default:
       throw new RepoMemoryError('INVALID_INPUT', `Unknown tool: ${name}`);
   }
@@ -686,7 +807,7 @@ export async function handleTool(mem: RepoMemory, name: string, args: Record<str
 
 const SERVER_INFO = {
   name: 'repomemory',
-  version: '2.14.0',
+  version: '2.15.0',
 };
 
 const CAPABILITIES = {

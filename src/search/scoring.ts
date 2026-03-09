@@ -3,6 +3,8 @@ export interface ScoringWeights {
   tfidfWeight?: number;
   /** Weight for tag overlap (default 0.3) */
   tagWeight?: number;
+  /** Weight for neural embedding similarity (default 0). Set to 0.4 when neural is active. */
+  embeddingWeight?: number;
   /** Decay rate per day (default 0.005). Higher = faster decay. 0 = no decay. */
   decayRate?: number;
   /** Maximum access boost multiplier (default 5.0). Prevents runaway popularity. */
@@ -12,6 +14,7 @@ export interface ScoringWeights {
 export const DEFAULT_SCORING_WEIGHTS: Required<ScoringWeights> = {
   tfidfWeight: 0.7,
   tagWeight: 0.3,
+  embeddingWeight: 0,
   decayRate: 0.005,
   maxAccessBoost: 5.0,
 };
@@ -22,12 +25,22 @@ export interface ScoringParams {
   daysSinceUpdate: number;
   accessCount: number;
   weights?: ScoringWeights;
+  /** Neural embedding cosine similarity (0..1). Optional — when absent, formula is identical to pre-neural behavior. */
+  embeddingScore?: number;
 }
 
 export function computeScore(params: ScoringParams): number {
-  const { tfidfScore, tagOverlap, daysSinceUpdate, accessCount, weights } = params;
+  const { tfidfScore, tagOverlap, daysSinceUpdate, accessCount, weights, embeddingScore } = params;
   const w = { ...DEFAULT_SCORING_WEIGHTS, ...weights };
-  const relevance = tfidfScore * w.tfidfWeight + tagOverlap * w.tagWeight;
+
+  // When embedding score is available and has weight, include it in relevance
+  const embWeight = embeddingScore != null ? w.embeddingWeight : 0;
+  const totalWeight = w.tfidfWeight + w.tagWeight + embWeight;
+  // Normalize weights to sum to 1.0 (preserves backward compat when embWeight=0)
+  const normTfidf = totalWeight > 0 ? w.tfidfWeight / totalWeight : 0;
+  const normTag = totalWeight > 0 ? w.tagWeight / totalWeight : 0;
+  const normEmb = totalWeight > 0 ? embWeight / totalWeight : 0;
+  const relevance = tfidfScore * normTfidf + tagOverlap * normTag + (embeddingScore ?? 0) * normEmb;
   // Clamp decay to prevent underflow for very old entities (floor at 1% relevance)
   const decay = w.decayRate === 0 ? 1 : Math.max(0.01, Math.exp(-w.decayRate * daysSinceUpdate));
   // Fix: log2(2 + count) ensures first access (count=1) already provides a boost

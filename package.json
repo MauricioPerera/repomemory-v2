@@ -1,6 +1,6 @@
 {
   "name": "@rckflr/repomemory",
-  "version": "2.14.0",
+  "version": "2.15.0",
   "description": "Git-inspired agentic memory system — library + CLI",
   "type": "module",
   "main": "dist/index.js",
@@ -22,6 +22,10 @@
     "./rag": {
       "import": "./dist/rag/index.js",
       "types": "./dist/rag/index.d.ts"
+    },
+    "./neural": {
+      "import": "./dist/neural/index.js",
+      "types": "./dist/neural/index.d.ts"
     }
   },
   "scripts": {
@@ -39,6 +43,14 @@
   "files": [
     "dist"
   ],
+  "peerDependencies": {
+    "@huggingface/transformers": ">=3.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@huggingface/transformers": {
+      "optional": true
+    }
+  },
   "keywords": [
     "ai",
     "memory",
@@ -46,7 +58,10 @@
     "mcp",
     "context",
     "knowledge-base",
-    "versioned-storage"
+    "versioned-storage",
+    "neural",
+    "embeddings",
+    "semantic-search"
   ],
   "repository": {
     "type": "git",

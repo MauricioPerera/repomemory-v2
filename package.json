@@ -1,5 +1,5 @@
 {
-  "name": "repomemory",
+  "name": "@rckflr/repomemory",
   "version": "2.13.0",
   "description": "Git-inspired agentic memory system — library + CLI",
   "type": "module",
@@ -35,5 +35,18 @@
   "files": [
     "dist"
   ],
+  "keywords": [
+    "ai",
+    "memory",
+    "agent",
+    "mcp",
+    "context",
+    "knowledge-base",
+    "versioned-storage"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rckflr/repomemory-v2.git"
+  },
   "license": "MIT"
 }

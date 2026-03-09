@@ -1,5 +1,8 @@
 # RepoMemory v2
 
+[![npm version](https://img.shields.io/npm/v/@rckflr/repomemory.svg)](https://www.npmjs.com/package/@rckflr/repomemory)
+[![license](https://img.shields.io/npm/l/@rckflr/repomemory.svg)](https://github.com/rckflr/repomemory-v2/blob/main/LICENSE)
+
 Git-inspired agentic memory system. Zero runtime dependencies.
 
 RepoMemory provides persistent, versioned memory for AI agents. Every change is tracked through an immutable commit chain with content-addressable storage — like Git, but purpose-built for agent memory.
@@ -42,7 +45,7 @@ RepoMemory provides persistent, versioned memory for AI agents. Every change is 
 ## Install
 
 ```bash
-npm install repomemory
+npm install @rckflr/repomemory
 ```
 
 ## Quick Start
@@ -50,7 +53,7 @@ npm install repomemory
 ### As a library
 
 ```ts
-import { RepoMemory } from 'repomemory';
+import { RepoMemory } from '@rckflr/repomemory';
 
 const mem = new RepoMemory({ dir: '.repomemory' });
 
@@ -90,7 +93,7 @@ repomemory verify
 ### `RepoMemory`
 
 ```ts
-import { RepoMemory } from 'repomemory';
+import { RepoMemory } from '@rckflr/repomemory';
 
 const mem = new RepoMemory({
   dir: '.repomemory',
@@ -416,8 +419,8 @@ const stats = mem.stats();
 AI features require a provider. The core library works 100% without AI.
 
 ```ts
-import { RepoMemory } from 'repomemory';
-import { OllamaProvider } from 'repomemory/ai';
+import { RepoMemory } from '@rckflr/repomemory';
+import { OllamaProvider } from '@rckflr/repomemory/ai';
 
 const mem = new RepoMemory({
   dir: '.repomemory',
@@ -480,7 +483,7 @@ By default, `compactPrompts` is auto-detected: `true` for Ollama providers, `fal
 ##### Available Providers
 
 ```ts
-import { OllamaProvider, OpenAiProvider, AnthropicProvider } from 'repomemory/ai';
+import { OllamaProvider, OpenAiProvider, AnthropicProvider } from '@rckflr/repomemory/ai';
 
 new OllamaProvider({ model: 'llama3.1', baseUrl: 'http://localhost:11434', timeoutMs: 120_000 });
 new OpenAiProvider({ apiKey: '...', model: 'gpt-4o-mini', baseUrl: 'http://localhost:8080/v1', timeoutMs: 120_000 });
@@ -491,7 +494,7 @@ new AnthropicProvider({ apiKey: '...', model: 'claude-sonnet-4-20250514', timeou
 ##### Custom Provider
 
 ```ts
-import type { AiProvider, AiMessage } from 'repomemory';
+import type { AiProvider, AiMessage } from '@rckflr/repomemory';
 
 class MyProvider implements AiProvider {
   async chat(messages: AiMessage[]): Promise<string> {

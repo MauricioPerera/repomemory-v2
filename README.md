@@ -795,6 +795,25 @@ The TF-IDF index is cached to disk and updated incrementally — no full rebuild
 
 ## Changelog
 
+### v2.13.0
+
+**Security Hardening & Robustness**
+
+- **Timing-safe API key comparison**: HTTP API uses `crypto.timingSafeEqual` to prevent timing attacks on Bearer token authentication.
+- **Symlink cycle protection**: `RefStore.walkRefs()` uses `lstatSync` + visited Set + depth cap (20) to prevent infinite recursion on symlink cycles.
+- **Broken commit chain resilience**: `history()` returns partial chain instead of crashing when a commit in the chain is missing or corrupted.
+- **AI hallucination guard**: Consolidation pipelines validate AI-generated IDs against actual chunk items before executing merges/deletes. Prevents hallucinated IDs from corrupting storage.
+- **Query tag stemming**: Query tags are now stemmed with Porter stemmer for consistent tag overlap scoring with entity tags.
+- **Atomic audit log rotation**: Uses `atomicWriteFileSync` for audit log rotation with corrupted line filtering.
+- **Content-Type validation**: HTTP API returns 415 Unsupported Media Type for non-JSON POST requests.
+- **Search limit alignment**: HTTP `/search` endpoint clamped to 200 (matching internal `MAX_SEARCH_LIMIT`).
+- **Snapshot metadata validation**: Verifies `snapshot.json` exists and is parseable before destructive restore operations.
+- **Stray file robustness**: `listAll()` in ObjectStore and CommitStore skips non-directory entries in prefix directories.
+- **Published to npm**: Available as `@rckflr/repomemory` (scoped package).
+
+**Tests**
+- Added 23 new tests covering broken chains, tag caps, path traversal, entity type validation, search limits, query stemming, snapshot validation, audit rotation, stray files, symlink protection, stemmer idempotence, and index rebuild. Total: ~355 tests across 30 files.
+
 ### v2.12.0
 
 **Robustness & Safety Hardening**
@@ -965,7 +984,7 @@ npm run build        # Build ESM + .d.ts + sourcemaps (tsup)
 
 ### Running Tests
 
-Tests use temporary directories and clean up after themselves. ~335 tests across 29 files:
+Tests use temporary directories and clean up after themselves. ~355 tests across 30 files:
 
 - **Unit tests**: tokenizer, TF-IDF, scoring, JSON serialization, CLI parser
 - **Storage tests**: object store, commit store, ref store, engine, snapshots
@@ -978,6 +997,7 @@ Tests use temporary directories and clean up after themselves. ~335 tests across
 - **v2.10 security tests**: path traversal prevention, restore locks, history depth limits, scope encoding, knowledge dedup source check, snapshot validation, HTTP size limits
 - **v2.11 scalability tests**: scope encoding collision prevention (2), content size limits (4), conversation pagination (3), profile cross-agent limits (3), prefix scan bounds (2)
 - **v2.12 hardening**: no new test files — all changes are internal robustness improvements validated by existing tests
+- **v2.13 hardening tests**: broken commit chains, tag caps, path traversal, entity type validation, search limits, query stemming, snapshot validation, audit rotation, stray files, symlink protection, stemmer idempotence, index rebuild (23 tests)
 - **Benchmarks**: save/saveMany throughput, search latency
 
 ```bash

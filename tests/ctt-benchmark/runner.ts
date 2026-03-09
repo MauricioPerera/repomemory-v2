@@ -46,18 +46,18 @@ function seedDomain(repo: RepoMemory, domain: BenchmarkDomain): void {
     });
   }
 
-  // Seed skills
+  // Seed skills (userId is undefined for agent-scoped entities)
   for (const skill of seedData.skills) {
-    repo.skills.save(agentId, {
+    repo.skills.save(agentId, undefined, {
       content: skill.content,
       tags: skill.tags,
       category: skill.category,
     });
   }
 
-  // Seed knowledge
+  // Seed knowledge (userId is undefined for agent-scoped entities)
   for (const k of seedData.knowledge) {
-    repo.knowledge.save(agentId, {
+    repo.knowledge.save(agentId, undefined, {
       content: k.content,
       tags: k.tags,
       source: k.source,
@@ -115,7 +115,7 @@ async function benchmarkDomain(
       limit: 10,
       maxChars: maxContextChars,
     });
-    const systemPrompt = `You are a helpful assistant. Use the following context to answer the user's question accurately.\n\n${recall.context}`;
+    const systemPrompt = `You are a helpful assistant. Use the following context to answer the user's question accurately.\n\n${recall.formatted}`;
 
     const cttResult = await runQuery(provider, tq.query, systemPrompt);
     const cttScore = scoreResponse(cttResult.response, tq.expectedTopics, tq.expectedFacts);
@@ -131,8 +131,8 @@ async function benchmarkDomain(
       topicTotal: tq.expectedTopics.length,
       factHits: cttScore.factHits,
       factTotal: tq.expectedFacts.length,
-      contextItems: recall.items.length,
-      contextChars: recall.context.length,
+      contextItems: recall.totalItems,
+      contextChars: recall.formatted.length,
     });
   }
 
@@ -228,11 +228,15 @@ export async function runBenchmark(config: BenchmarkConfig): Promise<BenchmarkRe
     try {
       for (const provider of config.providers) {
         console.log(`[CTT-BENCH] Running: ${provider.name} × ${domain.name}`);
-        const result = await benchmarkDomain(provider, domain, repo, maxContextChars);
-        results.push(result);
-        console.log(
-          `[CTT-BENCH]   Base: ${(result.baseScore * 100).toFixed(0)}% → CTT: ${(result.cttScore * 100).toFixed(0)}% (${isFinite(result.improvement) ? `+${result.improvement.toFixed(0)}%` : 'N/A→CTT'})`,
-        );
+        try {
+          const result = await benchmarkDomain(provider, domain, repo, maxContextChars);
+          results.push(result);
+          console.log(
+            `[CTT-BENCH]   Base: ${(result.baseScore * 100).toFixed(0)}% → CTT: ${(result.cttScore * 100).toFixed(0)}% (${isFinite(result.improvement) ? `+${result.improvement.toFixed(0)}%` : 'N/A→CTT'})`,
+          );
+        } catch (err) {
+          console.error(`[CTT-BENCH]   FAILED: ${provider.name} × ${domain.name} — ${err instanceof Error ? err.message : String(err)}`);
+        }
       }
     } finally {
       rmSync(tmpDir, { recursive: true, force: true });

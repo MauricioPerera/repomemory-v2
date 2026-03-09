@@ -33,13 +33,12 @@ describe.skipIf(!hasCF && !hasOllama)('CTT Benchmark', () => {
       const { CloudflareProvider } = await import('../../src/ai/providers/cloudflare.js');
       const cfModels = [
         { name: 'Llama-3.1-8B', model: '@cf/meta/llama-3.1-8b-instruct' },
-        { name: 'Mistral-7B', model: '@cf/mistral/mistral-7b-instruct-v0.2' },
+        { name: 'GPT-OSS-20B', model: '@cf/openai/gpt-oss-20b' },
       ];
 
-      // Add large models only if explicitly requested
+      // Add large/expensive models only if explicitly requested
       if (process.env.CTT_BENCH_ALL_MODELS) {
         cfModels.push(
-          { name: 'GPT-OSS-20B', model: '@cf/openai/gpt-oss-20b' },
           { name: 'GPT-OSS-120B', model: '@cf/openai/gpt-oss-120b' },
         );
       }

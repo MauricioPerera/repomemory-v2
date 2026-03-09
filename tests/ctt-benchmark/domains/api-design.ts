@@ -66,32 +66,32 @@ export const apiDesignDomain: BenchmarkDomain = {
         source: 'perf-guide',
       },
     ],
-    testQueries: [
-      {
-        query: 'How should we handle API errors?',
-        expectedTopics: ['error handling', 'RFC 7807'],
-        expectedFacts: ['RFC 7807', 'Problem Details', 'ERR_NOT_FOUND', 'controller level'],
-      },
-      {
-        query: 'What is our auth strategy?',
-        expectedTopics: ['authentication', 'JWT'],
-        expectedFacts: ['Auth0', 'access_token', 'refresh_token', '15min', 'Bearer'],
-      },
-      {
-        query: 'How does pagination work in our API?',
-        expectedTopics: ['pagination', 'cursor'],
-        expectedFacts: ['cursor-based', 'base64', 'hasMore', 'never use offset'],
-      },
-      {
-        query: 'What are the rate limits per tier?',
-        expectedTopics: ['rate limiting', 'tiers'],
-        expectedFacts: ['100 requests/minute', '1000/min', '10000/min', 'Redis', 'sliding window'],
-      },
-      {
-        query: 'How do we handle webhook deliveries?',
-        expectedTopics: ['webhooks', 'delivery'],
-        expectedFacts: ['HMAC-SHA256', 'X-Webhook-Signature', 'retry 3 times', 'exponential backoff'],
-      },
-    ],
   },
+  testQueries: [
+    {
+      query: 'How should we handle API errors?',
+      expectedTopics: ['error handling', 'RFC 7807'],
+      expectedFacts: ['RFC 7807', 'Problem Details', 'ERR_NOT_FOUND', 'controller level'],
+    },
+    {
+      query: 'What is our auth strategy?',
+      expectedTopics: ['authentication', 'JWT'],
+      expectedFacts: ['Auth0', 'access_token', 'refresh_token', '15min', 'Bearer'],
+    },
+    {
+      query: 'How does pagination work in our API?',
+      expectedTopics: ['pagination', 'cursor'],
+      expectedFacts: ['cursor-based', 'base64', 'hasMore', 'never use offset'],
+    },
+    {
+      query: 'What are the rate limits per tier?',
+      expectedTopics: ['rate limiting', 'tiers'],
+      expectedFacts: ['100 requests/minute', '1000/min', '10000/min', 'Redis', 'sliding window'],
+    },
+    {
+      query: 'How do we handle webhook deliveries?',
+      expectedTopics: ['webhooks', 'delivery'],
+      expectedFacts: ['HMAC-SHA256', 'X-Webhook-Signature', 'retry 3 times', 'exponential backoff'],
+    },
+  ],
 };

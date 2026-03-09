@@ -66,32 +66,32 @@ export const customerSupportDomain: BenchmarkDomain = {
         source: 'sla-document',
       },
     ],
-    testQueries: [
-      {
-        query: "What is ACME Corp's subscription and who is their contact?",
-        expectedTopics: ['ACME', 'subscription'],
-        expectedFacts: ['Enterprise', '$499/month', 'Sarah Chen', 'sarah@acme.com'],
-      },
-      {
-        query: "What is ACME's refund policy?",
-        expectedTopics: ['refund', 'policy'],
-        expectedFacts: ['30 days', 'correction', 'not 15'],
-      },
-      {
-        query: '¿Cuál es el plan de TechLatam y su contacto?',
-        expectedTopics: ['TechLatam', 'plan'],
-        expectedFacts: ['Pro', '$99', 'Carlos Ruiz', 'carlos@techlatam.io'],
-      },
-      {
-        query: 'What are the steps to process a refund?',
-        expectedTopics: ['refund', 'process'],
-        expectedFacts: ['verify identity', 'eligibility', 'prorated', 'billing system', 'confirmation email'],
-      },
-      {
-        query: 'What SLA guarantees do Enterprise customers get?',
-        expectedTopics: ['SLA', 'Enterprise'],
-        expectedFacts: ['99.99%', '1-hour response', 'dedicated account manager'],
-      },
-    ],
   },
+  testQueries: [
+    {
+      query: "What is ACME Corp's subscription and who is their contact?",
+      expectedTopics: ['ACME', 'subscription'],
+      expectedFacts: ['Enterprise', '$499/month', 'Sarah Chen', 'sarah@acme.com'],
+    },
+    {
+      query: "What is ACME's refund policy?",
+      expectedTopics: ['refund', 'policy'],
+      expectedFacts: ['30 days', 'correction', 'not 15'],
+    },
+    {
+      query: '¿Cuál es el plan de TechLatam y su contacto?',
+      expectedTopics: ['TechLatam', 'plan'],
+      expectedFacts: ['Pro', '$99', 'Carlos Ruiz', 'carlos@techlatam.io'],
+    },
+    {
+      query: 'What are the steps to process a refund?',
+      expectedTopics: ['refund', 'process'],
+      expectedFacts: ['verify identity', 'eligibility', 'prorated', 'billing system', 'confirmation email'],
+    },
+    {
+      query: 'What SLA guarantees do Enterprise customers get?',
+      expectedTopics: ['SLA', 'Enterprise'],
+      expectedFacts: ['99.99%', '1-hour response', 'dedicated account manager'],
+    },
+  ],
 };

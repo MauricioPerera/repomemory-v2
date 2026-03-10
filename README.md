@@ -3,6 +3,8 @@
 [![npm version](https://img.shields.io/npm/v/@rckflr/repomemory.svg)](https://www.npmjs.com/package/@rckflr/repomemory)
 [![license](https://img.shields.io/npm/l/@rckflr/repomemory.svg)](https://github.com/rckflr/repomemory-v2/blob/main/LICENSE)
 
+> **Read the official paper:** [Context Is All You Need (PDF)](paper/Context_Is_All_You_Need_CTT_Paper.pdf)
+
 Git-inspired agentic memory system. Zero runtime dependencies.
 
 RepoMemory provides persistent, versioned memory for AI agents. Every change is tracked through an immutable commit chain with content-addressable storage — like Git, but purpose-built for agent memory.

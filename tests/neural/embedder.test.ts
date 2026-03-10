@@ -8,19 +8,28 @@ import { Embedder } from '../../src/neural/embedder.js';
 
 // Mock the dynamic import of @huggingface/transformers
 vi.mock('@huggingface/transformers', () => {
-  const mockPipelineFn = async (text: string | string[], _options?: Record<string, unknown>) => {
-    // Generate deterministic pseudo-embeddings from text
-    const t = Array.isArray(text) ? text[0] : text;
+  function generateVector(t: string): Float32Array {
     const vec = new Float32Array(768);
     for (let i = 0; i < 768; i++) {
       vec[i] = Math.sin((t.charCodeAt(i % t.length) + i) * 0.01);
     }
-    // L2 normalize
     let norm = 0;
     for (let i = 0; i < 768; i++) norm += vec[i] * vec[i];
     norm = Math.sqrt(norm);
     if (norm > 0) for (let i = 0; i < 768; i++) vec[i] /= norm;
-    return { data: vec };
+    return vec;
+  }
+
+  const mockPipelineFn = async (text: string | string[], _options?: Record<string, unknown>) => {
+    // Generate deterministic pseudo-embeddings — handle both single and batch input
+    if (Array.isArray(text)) {
+      const combined = new Float32Array(text.length * 768);
+      for (let j = 0; j < text.length; j++) {
+        combined.set(generateVector(text[j]), j * 768);
+      }
+      return { data: combined };
+    }
+    return { data: generateVector(text) };
   };
 
   return {
@@ -107,6 +116,17 @@ describe('Embedder', () => {
     it('returns empty array for empty input', async () => {
       const vecs = await embedder.embedBatch([]);
       expect(vecs).toEqual([]);
+    });
+
+    it('batch results match individual embed results', async () => {
+      const texts = ['alpha', 'beta', 'gamma'];
+      const batchVecs = await embedder.embedBatch(texts);
+      const singleVecs = await Promise.all(texts.map(t => embedder.embed(t)));
+      for (let i = 0; i < texts.length; i++) {
+        for (let j = 0; j < 768; j++) {
+          expect(batchVecs[i][j]).toBeCloseTo(singleVecs[i][j], 5);
+        }
+      }
     });
   });
 

@@ -56,15 +56,18 @@ export class Embedder {
   }
 
   /**
-   * Batch embed multiple texts. More efficient than sequential calls
-   * when the underlying pipeline supports batching.
+   * Batch embed multiple texts. Passes the array to the pipeline in a single
+   * inference call, then slices the flat Float32Array into individual vectors.
    */
   async embedBatch(texts: string[]): Promise<Float32Array[]> {
     if (texts.length === 0) return [];
-    // Process sequentially — HF transformers.js handles internal batching
+    if (texts.length === 1) return [await this.embed(texts[0])];
+    await this.ensureLoaded();
+    const fullDim = this.dimensions[this.dimensions.length - 1];
+    const result = await this.pipeline!(texts, { pooling: 'mean', normalize: true });
     const results: Float32Array[] = [];
-    for (const text of texts) {
-      results.push(await this.embed(text));
+    for (let i = 0; i < texts.length; i++) {
+      results.push(new Float32Array(result.data.slice(i * fullDim, (i + 1) * fullDim)));
     }
     return results;
   }

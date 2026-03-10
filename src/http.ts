@@ -2,6 +2,7 @@ import { createServer } from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import { RepoMemory } from './index.js';
 import { handleTool, tools } from './mcp/handler.js';
+import { RepoMemoryError } from './types/errors.js';
 
 const args = process.argv.slice(2);
 let dir = '.repomemory';
@@ -150,8 +151,8 @@ const server = createServer(async (req, res) => {
     const toolMatch = url.match(/^\/tool\/([a-z_]+)$/);
     if (toolMatch && req.method === 'POST') {
       // Validate Content-Type for POST requests
-      const contentType = req.headers['content-type'] ?? '';
-      if (contentType && !contentType.includes('application/json')) {
+      const contentType = (req.headers['content-type'] ?? '').split(';')[0].trim();
+      if (contentType && contentType !== 'application/json') {
         jsonResponse(res, 415, { error: 'Unsupported Media Type: expected application/json' });
         return;
       }
@@ -172,11 +173,20 @@ const server = createServer(async (req, res) => {
     jsonResponse(res, 404, { error: 'Not found. Endpoints: GET /health, /stats, /tools, /entity/:id, /search?q=...&agentId=..., POST /tool/<name>, DELETE /entity/:id' });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    if (message.includes('too large')) {
+    if (err instanceof RepoMemoryError) {
+      const statusMap: Record<string, number> = {
+        NOT_FOUND: 404,
+        INVALID_INPUT: 400,
+        AI_NOT_CONFIGURED: 501,
+        AI_ERROR: 502,
+        MIDDLEWARE_CANCELLED: 409,
+        NEURAL_NOT_READY: 503,
+      };
+      jsonResponse(res, statusMap[err.code] ?? 400, { error: message, code: err.code });
+    } else if (message.includes('too large')) {
       jsonResponse(res, 413, { error: message });
     } else {
-      const status = message.includes('Unknown tool') ? 404 : 400;
-      jsonResponse(res, status, { error: message });
+      jsonResponse(res, 400, { error: message });
     }
   }
 });

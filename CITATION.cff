@@ -1,0 +1,24 @@
+cff-version: 1.2.0
+message: "If you use this software or the CTT framework in your research, please cite it using the following metadata."
+title: "RepoMemory v2: Git-inspired Agentic Memory System"
+authors:
+  - family-names: "Perera"
+    given-names: "Mauricio"
+version: "2.16.0"
+date-released: "2026-03-10"
+url: "https://github.com/MauricioPerera/repomemory-v2"
+repository-code: "https://github.com/MauricioPerera/repomemory-v2"
+license: "MIT"
+preferred-citation:
+  type: article
+  title: "Context Is All You Need: Evolutive Agentic Intelligence through Context-Time Training (CTT)"
+  authors:
+    - family-names: "Perera"
+      given-names: "Mauricio"
+  year: 2026
+  month: 3
+  url: "https://github.com/MauricioPerera/repomemory-v2"
+  # Cuando arXiv apruebe el paper, descomentar y agregar el enlace oficial:
+  # identifiers:
+  #   - type: url
+  #     value: "https://arxiv.org/abs/XXXX.XXXXX"

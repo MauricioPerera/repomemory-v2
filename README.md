@@ -796,10 +796,25 @@ Tested across 8 Cloudflare Workers AI models and 3 knowledge domains (TechStartu
 - Dense models with lower base scores see the largest relative gains (up to +800%)
 - The API Design domain shows the biggest CTT impact because base models have almost zero domain-specific knowledge
 
+**Sub-1B models (Ollama, CPU-only VPS):**
+
+| Model | Params | Base | CTT | Improvement |
+|-------|--------|------|-----|-------------|
+| Qwen3 0.6B | 600M | 25% | 65% | +211% |
+| Gemma3 270M | 270M | 22% | 41% | +106% |
+
+- Even the **smallest available model** (Gemma3 270M) benefits significantly from CTT (+106%)
+- Qwen3 0.6B achieves CTT scores (65%) comparable to 7B+ cloud models, demonstrating that CTT can compensate for model size
+- Sub-1B models run entirely on CPU with sub-15s latency per query — viable for edge/on-device deployment
+
 Run the benchmark yourself:
 
 ```bash
+# Cloudflare Workers AI (8 models)
 CLOUDFLARE_ACCOUNT_ID=xxx CLOUDFLARE_API_TOKEN=yyy npx vitest run tests/ctt-benchmark
+
+# Ollama (sub-1B local/VPS)
+OLLAMA_BASE_URL=http://localhost:11434 node tests/ctt-benchmark/run-ollama-benchmark.mjs gemma3:270m qwen3:0.6b
 ```
 
 ## Architecture

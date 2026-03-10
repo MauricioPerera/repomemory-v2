@@ -7,6 +7,9 @@
  *
  * For Ollama (local/VPS):
  *   OLLAMA_BASE_URL=http://localhost:8080 npx vitest run tests/ctt-benchmark
+ *
+ * For Gemma.cpp local (Google API format):
+ *   GEMMA_BASE_URL=http://localhost:8080 npx vitest run tests/ctt-benchmark
  */
 import { describe, it, expect } from 'vitest';
 import { writeFileSync } from 'node:fs';
@@ -16,15 +19,93 @@ import { techStartupDomain } from './domains/techstartup.js';
 import { apiDesignDomain } from './domains/api-design.js';
 import { customerSupportDomain } from './domains/customer-support.js';
 import type { BenchmarkConfig, BenchmarkProvider } from './types.js';
+import type { AiProvider, AiMessage } from '../../src/types/ai.js';
 
 const CF_ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID;
 const CF_API_TOKEN = process.env.CLOUDFLARE_API_TOKEN;
 const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL; // e.g., http://localhost:8080
+const GEMMA_BASE_URL = process.env.GEMMA_BASE_URL; // e.g., http://localhost:8080
 
 const hasCF = Boolean(CF_ACCOUNT_ID && CF_API_TOKEN);
 const hasOllama = Boolean(OLLAMA_BASE_URL);
+const hasGemma = Boolean(GEMMA_BASE_URL);
 
-describe.skipIf(!hasCF && !hasOllama)('CTT Benchmark', () => {
+/**
+ * Gemma.cpp provider — translates OpenAI chat format to Google API format.
+ * Gemma.cpp exposes: POST /v1beta/models/{model}:generateContent
+ * Request:  { systemInstruction?: { parts: [{ text }] }, contents: [{ role, parts: [{ text }] }] }
+ * Response: { candidates: [{ content: { parts: [{ text }] } }] }
+ */
+class GemmaCppProvider implements AiProvider {
+  private readonly baseUrl: string;
+  private readonly model: string;
+  private readonly timeoutMs: number;
+
+  constructor(baseUrl: string, model = 'gemma3-270m', timeoutMs = 120_000) {
+    this.baseUrl = baseUrl.replace(/\/$/, '');
+    this.model = model;
+    this.timeoutMs = timeoutMs;
+  }
+
+  async chat(messages: AiMessage[]): Promise<string> {
+    // Gemma.cpp does NOT support systemInstruction — it hangs the server.
+    // Instead, prepend system content to the first user message.
+    const systemText = messages
+      .filter(m => m.role === 'system')
+      .map(m => m.content)
+      .join('\n\n');
+
+    const userMessages = messages.filter(m => m.role !== 'system');
+    const contents = userMessages.map((m, i) => {
+      let text = m.content;
+      // Prepend system context to first user message
+      if (i === 0 && systemText && m.role === 'user') {
+        text = `${systemText}\n\n${text}`;
+      }
+      return {
+        role: m.role === 'assistant' ? 'model' : 'user',
+        parts: [{ text }],
+      };
+    });
+
+    const body: Record<string, unknown> = {
+      contents,
+      generationConfig: { maxOutputTokens: 512 },
+    };
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+
+    try {
+      const url = `${this.baseUrl}/v1beta/models/${this.model}:generateContent`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        throw new Error(`Gemma.cpp error: ${res.status} ${await res.text()}`);
+      }
+
+      const data = (await res.json()) as {
+        candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+      };
+
+      return data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+    } catch (e) {
+      if (e instanceof Error && e.name === 'AbortError') {
+        throw new Error(`Gemma.cpp request timed out after ${this.timeoutMs}ms`);
+      }
+      throw e;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+}
+
+describe.skipIf(!hasCF && !hasOllama && !hasGemma)('CTT Benchmark', () => {
   it('runs full benchmark across models and domains', async () => {
     const providers: BenchmarkProvider[] = [];
 
@@ -76,6 +157,16 @@ describe.skipIf(!hasCF && !hasOllama)('CTT Benchmark', () => {
           model: process.env.OLLAMA_MODEL ?? 'qwen3.5-2b',
           maxTokens: 2048,
         }),
+      });
+    }
+
+    // Gemma.cpp local (Google API format)
+    if (hasGemma) {
+      const gemmaModel = process.env.GEMMA_MODEL ?? 'gemma3-270m';
+      providers.push({
+        name: `Gemma-${gemmaModel}`,
+        model: gemmaModel,
+        provider: new GemmaCppProvider(GEMMA_BASE_URL!, gemmaModel, 300_000),
       });
     }
 

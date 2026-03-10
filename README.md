@@ -92,6 +92,71 @@ repomemory stats
 repomemory verify
 ```
 
+## AI Providers
+
+RepoMemory supports 4 AI providers for mining, consolidation, and RAG. All share the same `AiProvider` interface and can be swapped freely.
+
+```ts
+import { OllamaProvider, OpenAiProvider, AnthropicProvider, CloudflareProvider } from '@rckflr/repomemory/ai';
+```
+
+| Provider | Default Model | API Key Required | Local/Cloud | Key Feature |
+|----------|---------------|-----------------|-------------|-------------|
+| `OllamaProvider` | `llama3.1` | No | Local | Zero cost, private, reasoning model support |
+| `OpenAiProvider` | `gpt-4o-mini` | Yes (or custom endpoint) | Cloud/Local | Compatible with any OpenAI-format API |
+| `AnthropicProvider` | `claude-sonnet-4-20250514` | Yes | Cloud | Best quality for mining/consolidation |
+| `CloudflareProvider` | `@cf/meta/llama-3.1-8b-instruct` | Yes (API token) | Cloud | Free tier, AI Gateway analytics |
+
+### Ollama (local, zero cost)
+
+```ts
+const ai = new OllamaProvider({
+  model: 'llama3.1',                // any Ollama model
+  baseUrl: 'http://localhost:11434', // default
+  numPredict: 2048,                  // max output tokens (default: 2048)
+  numCtx: 4096,                      // context window (default: 4096)
+  disableThinking: true,             // disable reasoning for qwen3/deepseek-r1 (default: true)
+});
+const mem = new RepoMemory({ dir: '.repomemory', ai, autoMine: true });
+```
+
+### OpenAI (or any OpenAI-compatible API)
+
+```ts
+// Official OpenAI
+const ai = new OpenAiProvider({ apiKey: 'sk-...' });
+
+// Custom endpoint (llama.cpp, vLLM, LM Studio, etc.)
+const ai = new OpenAiProvider({
+  baseUrl: 'http://localhost:8080/v1',  // or OPENAI_BASE_URL env var
+  model: 'local-model',
+  // apiKey not required for custom endpoints
+});
+```
+
+### Anthropic
+
+```ts
+const ai = new AnthropicProvider({
+  apiKey: 'sk-ant-...',  // or ANTHROPIC_API_KEY env var
+  model: 'claude-sonnet-4-20250514',
+  maxTokens: 4096,
+});
+```
+
+### Cloudflare Workers AI
+
+```ts
+const ai = new CloudflareProvider({
+  accountId: '...',   // or CLOUDFLARE_ACCOUNT_ID env var
+  apiToken: '...',    // or CLOUDFLARE_API_TOKEN env var
+  model: '@cf/meta/llama-3.1-8b-instruct',
+  gateway: 'my-gateway',  // optional, for AI Gateway analytics/caching
+});
+```
+
+All providers include: 120s timeout (configurable), 2 retries with exponential backoff, transient error detection (429/5xx).
+
 ## API Reference
 
 ### `RepoMemory`
@@ -565,32 +630,51 @@ Strategy is auto-detected from file extension when not specified.
 
 ## CLI Reference
 
-```
-repomemory init [--dir <path>]
-repomemory save <type> --agent <id> [--user <id>] --content <text> [--tags t1,t2] [--category ...]
-repomemory save session --agent <id> --user <id> --file <path>
-repomemory search <query> --agent <id> [--user <id>] [--type memories|skills|knowledge] [--limit 5]
-repomemory get <entityId>
-repomemory list <type> --agent <id> [--user <id>]
-repomemory history <entityId>
-repomemory snapshot create [label]
-repomemory snapshot list
-repomemory snapshot restore <id>
-repomemory mine <sessionId> [--provider ollama|openai|anthropic] [--model <name>] [--base-url <url>]
-repomemory consolidate --agent <id> [--user <id>] [--type memories|skills|knowledge] [--provider ollama] [--model <name>] [--base-url <url>]
-repomemory recall <query> --agent <id> --user <id> [--max-items 20] [--max-chars 8000]
-repomemory cleanup [--max-age 90] [--max-audit 10000] [--dry-run]
-repomemory export <file.json>
-repomemory import <file.json> [--skip-existing]
-repomemory rag ingest <path> --agent <id> [--chunk-size 1000] [--overlap 200] [--strategy markdown]
-repomemory rag query <query> --agent <id> [--limit 10] [--provider ollama] [--model <name>] [--base-url <url>]
-repomemory rag sync <path> --agent <id> [--chunk-size 1000] [--overlap 200]
-repomemory rag status --agent <id>
-repomemory stats
-repomemory verify
-```
-
 All commands accept `--dir <path>` to specify the storage directory (default: `.repomemory`).
+
+### Data management
+
+| Command | Description |
+|---------|-------------|
+| `repomemory init` | Initialize storage directory |
+| `repomemory save <type> --agent <id> [--user <id>] --content <text> [--tags t1,t2] [--category ...]` | Save a memory, skill, knowledge, or profile |
+| `repomemory save session --agent <id> --user <id> --file <path>` | Save a session transcript from file |
+| `repomemory get <entityId>` | Fetch any entity by ID |
+| `repomemory list <type> --agent <id> [--user <id>]` | List all entities of a type |
+| `repomemory search <query> --agent <id> [--user <id>] [--type memories] [--limit 5]` | TF-IDF search across a collection |
+| `repomemory recall <query> --agent <id> --user <id> [--max-items 20] [--max-chars 8000]` | Retrieve formatted context for LLM prompts (all collections pooled by score) |
+| `repomemory history <entityId>` | Full commit history for an entity (including after deletion) |
+
+### AI pipelines
+
+| Command | Description |
+|---------|-------------|
+| `repomemory mine <sessionId> [--provider ollama] [--model <name>] [--base-url <url>]` | Extract memories, skills, and profile from a session using AI |
+| `repomemory consolidate --agent <id> [--user <id>] [--type memories] [--provider ollama] [--model <name>]` | Merge duplicate/similar entities using AI (chunks of 20, keep/merge/remove plan) |
+
+Providers: `ollama` (default), `openai`, `anthropic`, `cloudflare`. The `--base-url` flag works with any OpenAI-compatible endpoint (llama.cpp, vLLM, LM Studio).
+
+### RAG (document ingestion)
+
+| Command | Description |
+|---------|-------------|
+| `repomemory rag ingest <path> --agent <id> [--chunk-size 1000] [--overlap 200] [--strategy markdown]` | Ingest documents (strategies: `fixed`, `paragraph`, `markdown`) |
+| `repomemory rag query <query> --agent <id> [--limit 10] [--provider ollama]` | Query knowledge base with optional AI-generated answer |
+| `repomemory rag sync <path> --agent <id>` | Incremental sync — detects adds/deletes/modifications via SHA-256 |
+| `repomemory rag status --agent <id>` | Show RAG stats (total knowledge, chunks, unique sources) |
+
+### Administration
+
+| Command | Description |
+|---------|-------------|
+| `repomemory snapshot create [label]` | Create a point-in-time snapshot of all data |
+| `repomemory snapshot list` | List all snapshots |
+| `repomemory snapshot restore <id>` | Restore from a snapshot |
+| `repomemory export <file.json>` | Export all entities + access counts to portable JSON |
+| `repomemory import <file.json> [--skip-existing]` | Import entities from JSON (with dedup validation) |
+| `repomemory cleanup [--max-age 90] [--max-audit 10000] [--dry-run]` | Remove stale entities by age, rotate audit log |
+| `repomemory stats` | Show storage statistics |
+| `repomemory verify` | Verify storage integrity (hash validation of objects and commits) |
 
 ## MCP Server
 
@@ -708,6 +792,51 @@ Context-Time Training:       query → recall(memories + skills + knowledge) →
 2. **Recall phase** — on each new query, the recall engine scores and selects the most relevant entities using TF-IDF + tag overlap + time decay + optional neural embeddings
 3. **Inject phase** — selected context is formatted via a prompt template and prepended to the LLM's system prompt
 4. **Response phase** — the frozen model generates a response informed by the injected context
+
+### Mining and consolidation
+
+The seed phase above happens through two AI-driven pipelines:
+
+**Mining** extracts structured knowledge from raw session transcripts:
+
+```
+session transcript → AI extraction → memories[] + skills[] + profile
+```
+
+```ts
+// Programmatic
+const result = await mem.mine('session-id');
+// result: { sessionId, memories: [...], skills: [...], profile: {...} }
+
+// CLI
+repomemory mine <sessionId> --provider ollama --model llama3.1
+
+// Automatic (on every session save)
+const mem = new RepoMemory({
+  dir: '.repomemory',
+  ai: new OllamaProvider({ model: 'llama3.1' }),
+  autoMine: true,  // fires mining asynchronously after each session.save()
+});
+```
+
+AutoMine emits events for integration: `session:mined` on success, `session:automine:error` on failure.
+
+**Consolidation** merges duplicate and overlapping entities using AI:
+
+```
+all entities (chunked by 20) → AI plan (keep/merge/remove) → apply mutations
+```
+
+```ts
+// Programmatic
+const report = await mem.consolidate('agent-1', 'user-1', 'memories');
+// report: { merged: 5, removed: 3, kept: 12 }
+
+// CLI
+repomemory consolidate --agent agent-1 --user user-1 --type memories --provider ollama
+```
+
+Consolidation is idempotent — uses `saveOrUpdate()` internally, so repeated runs produce the same result. Supports memories, skills, and knowledge collections independently.
 
 ### Correction boost
 
@@ -949,17 +1078,48 @@ Queries pass through a multi-stage pipeline before scoring:
 ### Search Scoring
 
 ```
-score = relevance * decay * accessBoost
+finalScore  = base * correctionBoost        (if category = 'correction', else base)
+base        = relevance * decay * accessBoost
 
-relevance   = tfidfScore * tfidfWeight + tagOverlap * tagWeight
-tagOverlap  = |intersection| / |union|    (Jaccard similarity)
-decay       = e^(-decayRate * daysSinceUpdate)    (0 if decayRate = 0)
-accessBoost = min(1 + log2(1 + accessCount), maxAccessBoost)
+relevance   = tfidfScore * normTfidf + tagOverlap * normTag + embeddingScore * normEmb
+
+            where normX = weightX / (tfidfWeight + tagWeight + embeddingWeight)
+            (weights are normalized to sum to 1.0)
+
+tagOverlap  = |intersection| / |union|     (Jaccard similarity, case-insensitive)
+decay       = max(0.01, e^(-decayRate * daysSinceUpdate))    (floor at 1% relevance)
+accessBoost = min(log₂(2 + accessCount), maxAccessBoost)
 ```
 
-Default weights: `tfidfWeight=0.7`, `tagWeight=0.3`, `decayRate=0.005`, `maxAccessBoost=5.0`. All configurable via `scoring` config option.
+**Default weights:**
 
-The TF-IDF index is cached to disk and updated incrementally — no full rebuild on each search.
+| Weight | Default | Notes |
+|--------|---------|-------|
+| `tfidfWeight` | 0.7 | TF-IDF lexical relevance |
+| `tagWeight` | 0.3 | Jaccard tag overlap |
+| `embeddingWeight` | 0 | Cosine similarity (neural). Set to 0.4 when neural is active |
+| `decayRate` | 0.005 | Exponential decay per day. 0 = no decay |
+| `maxAccessBoost` | 5.0 | Cap on popularity multiplier |
+| `correctionBoost` | 2.0 | Multiplier for `correction` category memories |
+
+When `embeddingWeight=0` (default), the formula is mathematically identical to pre-neural behavior: `relevance = tfidfScore * 0.7 + tagOverlap * 0.3`.
+
+### Hybrid Search (Neural + Lexical)
+
+When neural search is enabled (`neural: { enabled: true }`), the system operates in two complementary modes:
+
+**1. Composite scoring** — `embeddingWeight` adds cosine similarity to the relevance formula above. Weights are automatically re-normalized (e.g., `tfidf=0.7, tag=0.3, embedding=0.4` normalizes to `0.5, 0.21, 0.29`).
+
+**2. Pure neural ranking** — The `neural_search` MCP tool bypasses TF-IDF entirely and returns results ranked solely by cosine similarity via Matryoshka 3-level pyramid:
+- **Level 1**: 128-dim coarse scan → top 50 candidates
+- **Level 2**: 256-dim re-rank → top 15 candidates
+- **Level 3**: 768-dim precise ranking → top N results
+
+This cascade eliminates ~83% of candidates at the cheapest level, achieving ~6x speedup over full-dimension brute force.
+
+**MMR diversity filtering** — `ContextCurator` applies Maximal Marginal Relevance (lambda=0.7) to prevent near-duplicate items: `mmrScore = 0.7 * relevance - 0.3 * maxSimilarityToSelected`. Items with similarity > 0.85 to already-selected results are suppressed.
+
+The TF-IDF index is cached to disk and updated incrementally — no full rebuild on each search. Neural embeddings are stored as binary Float32 arrays (3KB per entity) and indexed fire-and-forget on save.
 
 **Note:** The combined score is not normalized to [0, 1]. TF-IDF values depend on corpus size and term distribution, and `accessBoost` amplifies the score further. Keep this in mind when setting absolute thresholds (e.g., dedup uses 0.2).
 

@@ -63,25 +63,27 @@ export class StorageEngine {
    * Recovers from lookup/ref desynchronization caused by crashes mid-write.
    */
   rebuildLookupIndex(): { rebuilt: number; orphaned: number } {
-    const allRefs = this.refs.listAll();
-    let rebuilt = 0;
-    let orphaned = 0;
-    for (const refPath of allRefs) {
-      const ref = this.refs.get(refPath);
-      if (!ref) { orphaned++; continue; }
-      try {
-        const commit = this.commits.read(ref.head);
-        if (commit.objectHash === TOMBSTONE) continue;
-        const obj = this.objects.read(commit.objectHash);
-        const entity = obj.data as Entity;
-        const scope = scopeFromEntity(entity);
-        this.lookup.set(scope, entity.id, refPath);
-        rebuilt++;
-      } catch {
-        orphaned++;
+    return this.lock.withLock(() => {
+      const allRefs = this.refs.listAll();
+      let rebuilt = 0;
+      let orphaned = 0;
+      for (const refPath of allRefs) {
+        const ref = this.refs.get(refPath);
+        if (!ref) { orphaned++; continue; }
+        try {
+          const commit = this.commits.read(ref.head);
+          if (commit.objectHash === TOMBSTONE) continue;
+          const obj = this.objects.read(commit.objectHash);
+          const entity = obj.data as Entity;
+          const scope = scopeFromEntity(entity);
+          this.lookup.set(scope, entity.id, refPath);
+          rebuilt++;
+        } catch {
+          orphaned++;
+        }
       }
-    }
-    return { rebuilt, orphaned };
+      return { rebuilt, orphaned };
+    });
   }
 
   getVersion(): string {

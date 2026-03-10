@@ -87,7 +87,7 @@ export class EmbeddingStore {
     // Remove last element
     idx.ids.pop();
     idx.idMap.delete(entityId);
-    idx.vectors = idx.vectors.subarray(0, idx.ids.length * VECTOR_DIM);
+    idx.vectors = idx.vectors.slice(0, idx.ids.length * VECTOR_DIM);
 
     this.dirty.add(scope);
     return true;

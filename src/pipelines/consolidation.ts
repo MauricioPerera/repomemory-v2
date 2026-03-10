@@ -59,6 +59,9 @@ abstract class BaseConsolidationPipeline<T extends Entity> {
       // Validate all sourceIds belong to this chunk before any mutation
       const validSrcIds = merge.sourceIds.filter(id => validIds.has(id));
       if (validSrcIds.length === 0) continue;
+      // Validate AI-returned merged content before saving
+      if (!merge.merged.content || merge.merged.content.trim().length === 0) continue;
+      if (merge.merged.tags && merge.merged.tags.length > 50) continue;
       this.saveMerged(
         (items[0] as unknown as { agentId: string }).agentId,
         'userId' in items[0] ? (items[0] as unknown as { userId: string }).userId : undefined,

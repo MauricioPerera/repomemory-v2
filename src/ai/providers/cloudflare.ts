@@ -55,6 +55,9 @@ export class CloudflareProvider implements AiProvider {
 
     // Use AI Gateway URL if configured, otherwise direct Workers AI OpenAI-compatible endpoint
     if (config.gateway) {
+      if (!/^[a-zA-Z0-9_-]+$/.test(config.gateway)) {
+        throw new RepoMemoryError('AI_ERROR', 'Invalid gateway name: must be alphanumeric, hyphens, or underscores only');
+      }
       this.baseUrl = `https://gateway.ai.cloudflare.com/v1/${this.accountId}/${config.gateway}`;
     } else {
       this.baseUrl = `https://api.cloudflare.com/client/v4/accounts/${this.accountId}/ai/v1`;

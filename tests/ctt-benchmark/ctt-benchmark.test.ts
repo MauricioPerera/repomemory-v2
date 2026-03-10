@@ -34,6 +34,12 @@ describe.skipIf(!hasCF && !hasOllama)('CTT Benchmark', () => {
       const cfModels = [
         { name: 'Llama-3.1-8B', model: '@cf/meta/llama-3.1-8b-instruct' },
         { name: 'GPT-OSS-20B', model: '@cf/openai/gpt-oss-20b' },
+        { name: 'GLM-4.7-Flash', model: '@cf/zai-org/glm-4.7-flash' },
+        { name: 'Granite-4.0-H-Micro', model: '@cf/ibm-granite/granite-4.0-h-micro' },
+        { name: 'Qwen3-30B-A3B', model: '@cf/qwen/qwen3-30b-a3b-fp8' },
+        { name: 'Llama-2-7B-INT8', model: '@cf/meta/llama-2-7b-chat-int8' },
+        { name: 'Mistral-7B-v0.1', model: '@cf/mistral/mistral-7b-instruct-v0.1' },
+        { name: 'Llama-2-7B-FP16', model: '@cf/meta/llama-2-7b-chat-fp16' },
       ];
 
       // Add large/expensive models only if explicitly requested
@@ -102,5 +108,5 @@ describe.skipIf(!hasCF && !hasOllama)('CTT Benchmark', () => {
 
     // CTT should outperform base model (the whole point!)
     expect(avgCttScore).toBeGreaterThanOrEqual(avgBaseScore);
-  }, 300_000); // 5 minute timeout for API calls
+  }, 3_600_000); // 60 minute timeout — 8 models × 3 domains × 10 queries × 2 modes
 });

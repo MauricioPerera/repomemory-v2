@@ -42,6 +42,9 @@ RepoMemory provides persistent, versioned memory for AI agents. Every change is 
 - **Bounded queries** — paginated `listConversations()`, capped `getByUserAcrossAgents()`, bounded `listEntitiesByPrefix()`, search limit clamped to 200
 - **Graceful shutdown** — HTTP server handles `SIGTERM`/`SIGINT` with flush + 5-second forced timeout
 - **Cross-platform** — works on Windows, macOS, and Linux
+- **Context-Time Training (CTT)** — alternative to fine-tuning: model weights stay frozen, context is dynamically built per-query via the recall engine. Includes correction boost, prompt templates, and effectiveness metrics
+- **Neural semantic search** — optional EmbeddingGemma-300m via `@huggingface/transformers` with Matryoshka 3-level ranking (128→256→768 dims). Cross-lingual, MMR diversity, fire-and-forget indexing
+- **Cloudflare Workers AI** — dedicated provider with OpenAI-compatible endpoints and AI Gateway support
 
 ## Install
 
@@ -614,7 +617,7 @@ Add to your MCP client configuration (e.g., Claude Desktop, Cursor, etc.):
 }
 ```
 
-### Available Tools (27)
+### Available Tools (34)
 
 | Tool | Description |
 |------|-------------|
@@ -643,6 +646,13 @@ Add to your MCP client configuration (e.g., Claude Desktop, Cursor, etc.):
 | `rag_query` | Query RAG knowledge with optional AI answer |
 | `rag_sync` | Sync a directory (detect changes, re-ingest) |
 | `rag_status` | Show RAG stats for an agent |
+| `neural_status` | Check neural engine status and stats |
+| `neural_index` | Trigger neural indexing for a scope |
+| `neural_search` | Semantic search via embeddings |
+| `neural_similarity` | Find similar entities by ID |
+| `memory_correct` | Save a correction that overrides incorrect memories |
+| `recall_templates` | List available prompt templates |
+| `ctt_metrics` | Get CTT quality metrics per agent |
 | `export` | Export all entities as portable JSON |
 | `import` | Import entities from export payload |
 
@@ -682,6 +692,115 @@ curl -X POST http://localhost:3210/tool/stats -d '{}'
 ```
 
 CORS is enabled by default (`Access-Control-Allow-Origin: *`).
+
+## Context-Time Training (CTT)
+
+CTT is an alternative to fine-tuning. Instead of modifying model weights, RepoMemory dynamically builds a per-query context window using its recall engine. The model stays frozen — all "training" happens at context assembly time.
+
+### How it works
+
+```
+Traditional fine-tuning:     data → train model → deploy new weights
+Context-Time Training:       query → recall(memories + skills + knowledge) → inject context → frozen model
+```
+
+1. **Seed phase** — the agent accumulates memories, skills, and knowledge through normal interactions (or via mining/consolidation)
+2. **Recall phase** — on each new query, the recall engine scores and selects the most relevant entities using TF-IDF + tag overlap + time decay + optional neural embeddings
+3. **Inject phase** — selected context is formatted via a prompt template and prepended to the LLM's system prompt
+4. **Response phase** — the frozen model generates a response informed by the injected context
+
+### Correction boost
+
+Save corrections to override incorrect information:
+
+```ts
+// Via library
+mem.memories.save('agent-1', 'user-1', {
+  content: 'The API rate limit is 1000/min, not 100/min as previously stated',
+  tags: ['api', 'rate-limit'],
+  category: 'correction',   // 2x scoring multiplier
+});
+
+// Via MCP tool
+// memory_correct { agentId, userId, original, correction, tags }
+```
+
+Corrections receive a 2x scoring boost and are formatted with a `[CORRECTION]` prefix in recall output, ensuring they surface above the original incorrect information.
+
+### Prompt templates
+
+Templates control how recalled context is structured for the LLM:
+
+| Template | Section order | Use case |
+|----------|--------------|----------|
+| `default` | profile → memories → skills → knowledge | General purpose |
+| `technical` | profile → skills → knowledge → memories | Code & architecture (skills 1.5x, knowledge 1.3x) |
+| `support` | profile → memories → knowledge → skills | Customer support (memories 1.5x, knowledge 1.2x) |
+| `rag_focused` | knowledge → profile → memories → skills | Document Q&A (knowledge 2.0x) |
+
+```ts
+// Use a template via recall
+const context = mem.recall('agent-1', 'user-1', 'how do I deploy?', {
+  template: 'technical',
+  maxChars: 4000,
+});
+```
+
+### CTT metrics
+
+Track recall effectiveness per agent per day:
+
+```ts
+// Via MCP tool: ctt_metrics { agentId, days? }
+// Returns:
+{
+  trend: [
+    { period: '2026-03-09', recallCalls: 42, hitRate: 0.85, avgItems: 3.2, avgTopScore: 0.72 }
+  ],
+  summary: { totalCalls: 42, hitRate: 0.85, avgItems: 3.2, avgTopScore: 0.72, totalCorrections: 3 }
+}
+```
+
+Metrics are stored as lightweight JSON files in `{dir}/metrics/` — no entity/commit overhead.
+
+### Benchmark results
+
+Tested across 8 Cloudflare Workers AI models and 3 knowledge domains (TechStartup, API Design, Customer Support). Each domain seeds memories, skills, and knowledge, then measures response quality with and without CTT context injection.
+
+**Per-model averages (across all 3 domains):**
+
+| Model | Params | Base | CTT | Improvement |
+|-------|--------|------|-----|-------------|
+| Qwen3-30B-A3B (MOE) | 30B (3B active) | 40% | 78% | +101% |
+| Mistral 7B v0.1 | 7B | 30% | 76% | +209% |
+| Granite 4.0-H-Micro | 8B | 21% | 74% | +333% |
+| Llama-2 7B FP16 | 7B | 24% | 70% | +370% |
+| Llama-3.1 8B | 8B | 27% | 69% | +282% |
+| Llama-2 7B INT8 | 7B | 29% | 69% | +170% |
+| GLM-4.7-Flash | 7B | 37% | 62% | +71% |
+| GPT-OSS-20B | 20B | 27% | 60% | +160% |
+
+**Summary:**
+
+| Metric | Value |
+|--------|-------|
+| Average base score (no context) | 29% |
+| Average CTT score (with context) | 70% |
+| Average improvement | **+212%** |
+| Best single result | +800% (Llama-2 7B FP16 on API Design) |
+| Best model (avg CTT score) | Qwen3-30B-A3B at 78% |
+
+**Key findings:**
+- CTT improves **every model** across **every domain** — no exceptions
+- MOE architecture (Qwen3 30B, 3B active) achieves the highest absolute CTT score (78%) with the lowest base improvement (+101%) because its base performance is already strong
+- Dense models with lower base scores see the largest relative gains (up to +800%)
+- The API Design domain shows the biggest CTT impact because base models have almost zero domain-specific knowledge
+
+Run the benchmark yourself:
+
+```bash
+CLOUDFLARE_ACCOUNT_ID=xxx CLOUDFLARE_API_TOKEN=yyy npx vitest run tests/ctt-benchmark
+```
 
 ## Architecture
 
@@ -795,7 +914,7 @@ RepoMemory (facade)
 |   +-- importData         Restore entities preserving IDs, re-index, restore access counts
 |
 +-- MCP Server (bin: repomemory-mcp)
-|   +-- handler.ts         Protocol logic: 27 tools, JSON-RPC dispatch (testable independently)
+|   +-- handler.ts         Protocol logic: 34 tools, JSON-RPC dispatch (testable independently)
 |   +-- mcp.ts             Stdio transport: Content-Length framing, buffer parsing
 |
 +-- HTTP Server (bin: repomemory-http)
@@ -868,8 +987,39 @@ The TF-IDF index is cached to disk and updated incrementally — no full rebuild
 | SHA-256 chunk versioning | Each chunk's hash is stored as `version` — sync compares hashes to detect modifications without re-reading all stored entities |
 | Auto-detected chunk strategy | File extension determines chunking: `.md` → markdown, code → fixed, prose → paragraph — sensible defaults without config |
 | RAG as sub-export | `@rckflr/repomemory/rag` is tree-shakeable; core library size unaffected for users who don't need RAG |
+| CTT over fine-tuning | Context injection is immediate, reversible, and works with any model. No training data prep, no GPU hours, no model hosting — just recall + inject |
+| Correction boost (2x) | Corrections must override stale facts. A 2x multiplier ensures they rank above the original incorrect memory without manual deletion |
+| Prompt templates as score multipliers | Templates adjust collection weights externally via score multipliers. No changes to core `computeScore()` — keeps scoring deterministic |
+| CTT metrics outside entity system | Metrics are write-heavy counters. Storing them as JSON files in `metrics/` avoids commit chain bloat for high-frequency tracking |
+| Neural as optional peer dep | `@huggingface/transformers` adds ~300MB. Optional peer dependency + dynamic `await import()` keeps core install at zero deps |
+| Matryoshka pyramid ranking | 3-level cascade (128→256→768 dims) eliminates ~83% of candidates at the cheap 128-dim level. Full 768-dim only runs on finalists |
+| Fire-and-forget neural indexing | Embedding latency (~10-50ms) would block synchronous saves. Detached promise keeps save path fast; stale embeddings self-correct on next save |
 
 ## Changelog
+
+### v2.16.0
+
+**Context-Time Training (CTT) Framework**
+
+- **CloudflareProvider** (`repomemory/ai`): Dedicated Cloudflare Workers AI provider with OpenAI-compatible endpoints. Supports direct API and AI Gateway URLs. Uses `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` env vars.
+- **Correction boost**: New `'correction'` memory category with 2x scoring multiplier. Corrections surface above regular memories with `[CORRECTION]` prefix. New MCP tool: `memory_correct`.
+- **Prompt templates**: 4 built-in templates (`default`, `technical`, `support`, `rag_focused`) controlling section order, headers, preamble, and per-collection weight multipliers. New MCP tool: `recall_templates`. The `recall` tool now accepts an optional `template` parameter.
+- **CTT metrics**: `MetricsTracker` stores per-agent-per-day JSON in `{dir}/metrics/`. Tracks recall calls, hits, items returned, top scores, corrections, mining, unique queries. New MCP tool: `ctt_metrics`.
+- **CTT benchmark framework** (`tests/ctt-benchmark/`): Automated benchmark harness comparing base model vs CTT-augmented responses across multiple models and knowledge domains. 3 built-in domains: TechStartup, APIDesign, CustomerSupport.
+- **34 MCP tools** total (3 new: `memory_correct`, `recall_templates`, `ctt_metrics`).
+
+### v2.15.0
+
+**Neural Semantic Search**
+
+- **Neural engine module** (`@rckflr/repomemory/neural`): Optional semantic search via EmbeddingGemma-300m (308M params, ONNX q8) through `@huggingface/transformers` peer dependency.
+- **Matryoshka 3-level pyramid**: 128-dim coarse scan → 256-dim re-rank → 768-dim precise ranking. ~6x faster than full-dim brute force.
+- **Cross-lingual support**: EmbeddingGemma supports 100+ languages. A Spanish memory matches an English query.
+- **MMR diversity**: `ContextCurator` applies Maximal Marginal Relevance (lambda=0.7) to prevent near-duplicate context.
+- **Fire-and-forget indexing**: `save()`/`update()` trigger embedding computation (~10-50ms) without blocking the sync write path.
+- **Binary storage format**: JSON manifest + contiguous Float32 per scope in `index/embeddings/`. LRU eviction (max 50 loaded scopes).
+- **4 new MCP tools**: `neural_status`, `neural_index`, `neural_search`, `neural_similarity`.
+- **Graceful degradation**: If `@huggingface/transformers` is not installed, all neural features silently degrade — TF-IDF search continues to work.
 
 ### v2.14.0
 

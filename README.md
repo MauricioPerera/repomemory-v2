@@ -42,7 +42,7 @@ RepoMemory provides persistent, versioned memory for AI agents. Every change is 
 - **Bounded queries** — paginated `listConversations()`, capped `getByUserAcrossAgents()`, bounded `listEntitiesByPrefix()`, search limit clamped to 200
 - **Graceful shutdown** — HTTP server handles `SIGTERM`/`SIGINT` with flush + 5-second forced timeout
 - **Cross-platform** — works on Windows, macOS, and Linux
-- **Context-Time Training (CTT)** — alternative to fine-tuning: model weights stay frozen, context is dynamically built per-query via the recall engine. Includes correction boost, prompt templates, and effectiveness metrics
+- **Context-Time Training (CTT)** — trains the agent, not the model. The agent accumulates knowledge from experience (mining), consolidates it over time, and corrects errors — while the model stays frozen. A trained agent with a 0.6B model outperforms an untrained agent with a 20B model. Includes correction boost, prompt templates, and effectiveness metrics
 - **Neural semantic search** — optional EmbeddingGemma-300m via `@huggingface/transformers` with Matryoshka 3-level ranking (128→256→768 dims). Cross-lingual, MMR diversity, fire-and-forget indexing
 - **Cloudflare Workers AI** — dedicated provider with OpenAI-compatible endpoints and AI Gateway support
 
@@ -779,19 +779,40 @@ CORS is enabled by default (`Access-Control-Allow-Origin: *`).
 
 ## Context-Time Training (CTT)
 
-CTT is an alternative to fine-tuning. Instead of modifying model weights, RepoMemory dynamically builds a per-query context window using its recall engine. The model stays frozen — all "training" happens at context assembly time.
+CTT trains the agent, not the model. The model stays frozen — what evolves is the agent's accumulated knowledge, extracted from experience through mining, consolidated over time, and corrected when wrong.
+
+The key distinction: **model** = stateless reasoning engine (replaceable). **Agent** = model + memory + recall (persistent, evolves, learns). Fine-tuning changes model weights; CTT builds the agent's knowledge base. A trained agent with a small model outperforms an untrained agent with a large one.
 
 ### How it works
 
 ```
-Traditional fine-tuning:     data → train model → deploy new weights
-Context-Time Training:       query → recall(memories + skills + knowledge) → inject context → frozen model
+Fine-tuning:   data → train model → deploy new weights     (model learns)
+CTT:           experience → mine → recall → inject context  (agent learns)
 ```
 
-1. **Seed phase** — the agent accumulates memories, skills, and knowledge through normal interactions (or via mining/consolidation)
-2. **Recall phase** — on each new query, the recall engine scores and selects the most relevant entities using TF-IDF + tag overlap + time decay + optional neural embeddings
-3. **Inject phase** — selected context is formatted via a prompt template and prepended to the LLM's system prompt
-4. **Response phase** — the frozen model generates a response informed by the injected context
+The agent learning cycle:
+
+1. **Accumulation** — the agent saves session transcripts from interactions (raw experience)
+2. **Extraction** — mining distills sessions into structured memories, skills, and user profiles
+3. **Consolidation** — duplicate/overlapping knowledge is merged; conflicts are resolved
+4. **Correction** — incorrect information is overridden via correction boost (2x multiplier)
+5. **Recall** — on each query, the most relevant knowledge is scored, selected, and injected into the frozen model's context
+
+This mirrors human learning: you don't rewire your neurons for each new task — you store experiences, extract patterns, consolidate during sleep, and recall relevant knowledge when needed. The hardware (brain/model) stays the same; what changes is the accumulated expertise.
+
+### Why train the agent, not the model
+
+| | Fine-tuning (model training) | CTT (agent training) |
+|--|------------------------------|----------------------|
+| What changes | Model weights | Agent's knowledge base |
+| Persistence | Baked into weights | External storage (RepoMemory) |
+| Reversibility | Hard (need original weights) | Trivial (delete/correct memories) |
+| Transferability | Model-specific | Model-agnostic — swap LLMs freely |
+| Learning speed | Hours/days of GPU time | Real-time (every interaction) |
+| Auditability | Black box | Full commit history per entity |
+| Correctability | Retrain from scratch | Correction boost overrides errors |
+| Cost | GPU hours, training data prep | Zero (just disk storage) |
+| Portability | Export entire model | `repomemory export` → JSON file |
 
 ### Mining and consolidation
 
@@ -892,14 +913,16 @@ Track recall effectiveness per agent per day:
 
 Metrics are stored as lightweight JSON files in `{dir}/metrics/` — no entity/commit overhead.
 
-### Benchmark results
+### Benchmark: trained vs untrained agents
 
-Tested across 8 Cloudflare Workers AI models and 3 knowledge domains (TechStartup, API Design, Customer Support). Each domain seeds memories, skills, and knowledge, then measures response quality with and without CTT context injection.
+The benchmark measures the same frozen model with and without agent training (accumulated knowledge). "Untrained" = fresh agent with no memories. "Trained" = agent seeded with domain-specific memories, skills, and knowledge via RepoMemory.
 
-**Per-model averages (across all 3 domains):**
+Tested across 10 models and 3 knowledge domains (TechStartup, API Design, Customer Support):
 
-| Model | Params | Base | CTT | Improvement |
-|-------|--------|------|-----|-------------|
+**Cloud models (Cloudflare Workers AI):**
+
+| Model | Params | Untrained | Trained | Improvement |
+|-------|--------|-----------|---------|-------------|
 | Qwen3-30B-A3B (MOE) | 30B (3B active) | 40% | 78% | +101% |
 | Mistral 7B v0.1 | 7B | 30% | 76% | +209% |
 | Granite 4.0-H-Micro | 8B | 21% | 74% | +333% |
@@ -909,32 +932,30 @@ Tested across 8 Cloudflare Workers AI models and 3 knowledge domains (TechStartu
 | GLM-4.7-Flash | 7B | 37% | 62% | +71% |
 | GPT-OSS-20B | 20B | 27% | 60% | +160% |
 
+**Sub-1B models (Ollama, CPU-only VPS):**
+
+| Model | Params | Untrained | Trained | Improvement |
+|-------|--------|-----------|---------|-------------|
+| Qwen3 0.6B | 600M | 25% | 65% | +211% |
+| Gemma3 270M | 270M | 22% | 41% | +106% |
+
 **Summary:**
 
 | Metric | Value |
 |--------|-------|
-| Average base score (no context) | 29% |
-| Average CTT score (with context) | 70% |
-| Average improvement | **+212%** |
+| Average untrained score | 28% |
+| Average trained score | 66% |
+| Average improvement | **+202%** |
 | Best single result | +800% (Llama-2 7B FP16 on API Design) |
-| Best model (avg CTT score) | Qwen3-30B-A3B at 78% |
+| Best trained agent | Qwen3-30B-A3B at 78% |
 
 **Key findings:**
-- CTT improves **every model** across **every domain** — no exceptions
-- MOE architecture (Qwen3 30B, 3B active) achieves the highest absolute CTT score (78%) with the lowest base improvement (+101%) because its base performance is already strong
-- Dense models with lower base scores see the largest relative gains (up to +800%)
-- The API Design domain shows the biggest CTT impact because base models have almost zero domain-specific knowledge
-
-**Sub-1B models (Ollama, CPU-only VPS):**
-
-| Model | Params | Base | CTT | Improvement |
-|-------|--------|------|-----|-------------|
-| Qwen3 0.6B | 600M | 25% | 65% | +211% |
-| Gemma3 270M | 270M | 22% | 41% | +106% |
-
-- Even the **smallest available model** (Gemma3 270M) benefits significantly from CTT (+106%)
-- Qwen3 0.6B achieves CTT scores (65%) comparable to 7B+ cloud models, demonstrating that CTT can compensate for model size
-- Sub-1B models run entirely on CPU with sub-15s latency per query — viable for edge/on-device deployment
+- A trained agent improves **every model** across **every domain** — no exceptions
+- A trained Qwen3 0.6B agent (65%) outperforms untrained 7B-20B agents (21-40%) — agent training compensates for model size
+- Even the smallest model (Gemma3 270M) benefits significantly from training (+106%)
+- The agent's knowledge is model-agnostic: the same RepoMemory data works with any LLM
+- Sub-1B trained agents run entirely on CPU with sub-15s latency — viable for edge/on-device deployment
+- The API Design domain shows the biggest training impact because untrained agents have zero domain-specific knowledge
 
 Run the benchmark yourself:
 

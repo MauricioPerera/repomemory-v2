@@ -377,6 +377,24 @@ export const tools: ToolDef[] = [
       required: ['data'],
     },
   },
+  {
+    name: 'export_filtered',
+    description: 'Export entities with optional filtering (query, tags, types, agent/user) and pack metadata. Returns v2 pack format for distributable Memory Packs.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Full-text search query to filter entities' },
+        tags: { type: 'array', items: { type: 'string' }, description: 'Only include entities with ALL of these tags' },
+        types: { type: 'array', items: { type: 'string', enum: ['memory', 'skill', 'knowledge', 'session', 'profile'] }, description: 'Entity types to include (default: all)' },
+        agentId: { type: 'string', description: 'Filter by agent ID' },
+        userId: { type: 'string', description: 'Filter by user ID' },
+        packName: { type: 'string', description: 'Pack name (enables v2 pack format)' },
+        packDescription: { type: 'string', description: 'Pack description' },
+        packAuthor: { type: 'string', description: 'Pack author' },
+        packVersion: { type: 'string', description: 'Pack version (e.g., 1.0.0)' },
+      },
+    },
+  },
   // -- RAG --
   {
     name: 'rag_ingest',
@@ -705,12 +723,16 @@ export async function handleTool(mem: RepoMemory, name: string, args: Record<str
       if (inclProfile != null) opts.includeProfile = inclProfile;
       opts.template = args.template as string | undefined;
       const ctx = mem.recall(requireString(args, 'agentId'), requireString(args, 'userId'), requireString(args, 'query'), opts);
-      return {
+      const result: Record<string, unknown> = {
         formatted: ctx.formatted,
         totalItems: ctx.totalItems,
         estimatedChars: ctx.estimatedChars,
         profile: ctx.profile,
       };
+      if (ctx.fewShotExamples && ctx.fewShotExamples.length > 0) {
+        result.fewShotExamples = ctx.fewShotExamples;
+      }
+      return result;
     }
     case 'recall_templates':
       return listTemplates();
@@ -745,6 +767,34 @@ export async function handleTool(mem: RepoMemory, name: string, args: Record<str
       return mem.import(args.data as Parameters<typeof mem.import>[0], {
         skipExisting: optionalBoolean(args, 'skipExisting'),
       });
+    }
+    case 'export_filtered': {
+      const filter: Record<string, unknown> = {};
+      const query = optionalString(args, 'query');
+      if (query) filter.query = query;
+      if (Array.isArray(args.tags)) filter.tags = args.tags;
+      if (Array.isArray(args.types)) filter.types = args.types;
+      const agentId = optionalString(args, 'agentId');
+      if (agentId) filter.agentId = agentId;
+      const userId = optionalString(args, 'userId');
+      if (userId) filter.userId = userId;
+
+      let pack: Record<string, unknown> | undefined;
+      const packName = optionalString(args, 'packName');
+      if (packName) {
+        pack = { name: packName };
+        const desc = optionalString(args, 'packDescription');
+        if (desc) pack.description = desc;
+        const author = optionalString(args, 'packAuthor');
+        if (author) pack.author = author;
+        const ver = optionalString(args, 'packVersion');
+        if (ver) pack.packVersion = ver;
+      }
+
+      return mem.exportFiltered(
+        Object.keys(filter).length > 0 ? filter as Parameters<typeof mem.exportFiltered>[0] : undefined,
+        pack as Parameters<typeof mem.exportFiltered>[1],
+      );
     }
 
     // RAG
@@ -882,7 +932,7 @@ export async function handleTool(mem: RepoMemory, name: string, args: Record<str
 
 const SERVER_INFO = {
   name: 'repomemory',
-  version: '2.15.0',
+  version: '2.17.0',
 };
 
 const CAPABILITIES = {

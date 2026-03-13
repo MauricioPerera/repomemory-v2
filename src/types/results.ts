@@ -87,6 +87,13 @@ export interface RecallOptions {
   template?: string | import('../recall/templates.js').PromptTemplate;
 }
 
+export interface FewShotExample {
+  /** Derived user question */
+  user: string;
+  /** Skill content containing the pattern to imitate */
+  assistant: string;
+}
+
 export interface RecallContext {
   memories: Array<SearchResult<Memory>>;
   skills: Array<SearchResult<Skill>>;
@@ -95,4 +102,6 @@ export interface RecallContext {
   formatted: string;
   totalItems: number;
   estimatedChars: number;
+  /** Few-shot examples extracted from recalled skills (for sub-1B model prompting) */
+  fewShotExamples?: FewShotExample[];
 }

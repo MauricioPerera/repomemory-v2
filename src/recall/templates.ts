@@ -26,6 +26,12 @@ export interface PromptTemplate {
   };
   /** Optional system preamble prepended before all sections */
   preamble?: string;
+  /** When true, extract few-shot conversation pairs from recalled skills.
+   *  Skills containing tool patterns are converted to user/assistant examples.
+   *  Designed for sub-1B models that learn better by imitating patterns. */
+  extractFewShot?: boolean;
+  /** Max few-shot examples to extract (default: 3) */
+  maxFewShot?: number;
 }
 
 /** Default section headers used when not overridden by template */
@@ -90,6 +96,27 @@ export const BUILTIN_TEMPLATES: Record<string, PromptTemplate> = {
       knowledge: 2.0,
     },
     preamble: 'Answer based primarily on the source documents below. Use additional context only for supplementary information.',
+  },
+
+  few_shot: {
+    id: 'few_shot',
+    name: 'Few-Shot (Small Models)',
+    sectionOrder: ['profile', 'skills', 'memories', 'knowledge'],
+    sectionHeaders: {
+      skills: '## Learned Patterns',
+      memories: '## Context',
+      knowledge: '## Reference',
+    },
+    collectionWeights: {
+      memories: 0.8,
+      skills: 2.0,
+      knowledge: 0.6,
+    },
+    /** When true, RecallEngine extracts few-shot conversation pairs from skills */
+    extractFewShot: true,
+    /** Max few-shot examples to extract */
+    maxFewShot: 3,
+    preamble: 'Use the learned patterns below as examples to follow. Imitate the format and structure shown.',
   },
 };
 

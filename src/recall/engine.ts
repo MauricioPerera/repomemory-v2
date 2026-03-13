@@ -1,7 +1,7 @@
 import type { RepoMemory } from '../index.js';
 import type { AccessTracker } from '../storage/access-tracker.js';
 import type { Memory, Skill, Knowledge, Profile } from '../types/entities.js';
-import type { SearchResult, RecallContext, RecallOptions } from '../types/results.js';
+import type { SearchResult, RecallContext, RecallOptions, FewShotExample } from '../types/results.js';
 import { formatRecallContext, formatWithTemplate } from './formatter.js';
 import { resolveTemplate } from './templates.js';
 import type { PromptTemplate } from './templates.js';
@@ -99,6 +99,12 @@ export class RecallEngine {
       : formatRecallContext(recallData, maxChars);
     const estimatedChars = formatted.length;
 
+    // Extract few-shot examples from skills if template requests it
+    let fewShotExamples: FewShotExample[] | undefined;
+    if (template?.extractFewShot && skills.length > 0) {
+      fewShotExamples = extractFewShotExamples(skills, template.maxFewShot ?? 3);
+    }
+
     return {
       memories,
       skills,
@@ -107,6 +113,68 @@ export class RecallEngine {
       formatted,
       totalItems,
       estimatedChars,
+      fewShotExamples,
     };
   }
+}
+
+/**
+ * Extract few-shot conversation pairs from skill memories.
+ * Skills containing tool-calling patterns (e.g., [MCP: ...], [CALC: ...], [FETCH: ...])
+ * are converted to user question → assistant response pairs.
+ *
+ * This technique was developed in MicroExpert: sub-1B models learn tool usage
+ * much better from demonstrated examples than from abstract instructions.
+ */
+function extractFewShotExamples(
+  skills: SearchResult<Skill>[],
+  maxExamples: number,
+): FewShotExample[] {
+  const examples: FewShotExample[] = [];
+  const toolPattern = /\[(MCP|CALC|FETCH):\s/;
+
+  for (const { entity } of skills) {
+    if (examples.length >= maxExamples) break;
+    if (!toolPattern.test(entity.content)) continue;
+
+    // Derive a user question from the skill content
+    const user = deriveQuestion(entity.content, entity.tags);
+    if (!user) continue;
+
+    examples.push({
+      user,
+      assistant: entity.content,
+    });
+  }
+
+  return examples;
+}
+
+/** Derive a plausible user question from skill content and tags */
+function deriveQuestion(content: string, tags: string[]): string | null {
+  // Try to extract text before the tool tag as the question context
+  const tagIdx = content.search(/\[(MCP|CALC|FETCH):\s/);
+  if (tagIdx <= 0) {
+    // No leading text — generate from tags
+    if (tags.length > 0) {
+      return `How do I ${tags.slice(0, 3).join(' ')}?`;
+    }
+    return null;
+  }
+
+  // Use text before the tag as the question (trim prefixes like "Para ", "To ", etc.)
+  let question = content.slice(0, tagIdx).trim();
+  // Remove common prefixes that make it a statement, not a question
+  question = question.replace(/^(para |to |use |when |si |if )/i, '').trim();
+  // Remove trailing colon/dash
+  question = question.replace(/[:—–-]+\s*$/, '').trim();
+
+  if (question.length < 5) {
+    if (tags.length > 0) return `How do I ${tags.slice(0, 3).join(' ')}?`;
+    return null;
+  }
+
+  // Ensure it ends with ? if it doesn't already
+  if (!question.endsWith('?')) question += '?';
+  return question;
 }

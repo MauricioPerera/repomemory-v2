@@ -6,6 +6,7 @@ import type { AccessTracker } from './storage/access-tracker.js';
 import { RepoMemoryError } from './types/errors.js';
 
 const EXPORT_VERSION = 1;
+const PACK_VERSION = 2;
 
 const VALID_ENTITY_TYPES: ReadonlySet<EntityType> = new Set(['memory', 'skill', 'knowledge', 'session', 'profile']);
 
@@ -192,4 +193,135 @@ function incrementTypeCount(
     case 'session': byType.sessions++; break;
     case 'profile': byType.profiles++; break;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Filtered export (v2 pack format) — inspired by MicroExpert memory packs
+// ---------------------------------------------------------------------------
+
+export interface PackMetadata {
+  name: string;
+  description?: string;
+  author?: string;
+  packVersion?: string;
+  url?: string;
+  models?: string[];
+  packTags?: string[];
+}
+
+export interface ExportFilter {
+  /** Full-text search query to filter entities */
+  query?: string;
+  /** Only include entities with ALL of these tags */
+  tags?: string[];
+  /** Entity types to include (default: all) */
+  types?: EntityType[];
+  /** Filter by agent ID */
+  agentId?: string;
+  /** Filter by user ID */
+  userId?: string;
+}
+
+export interface PackExportData {
+  version: number;
+  exportedAt: string;
+  agentId?: string;
+  userId?: string;
+  count: number;
+  pack?: PackMetadata;
+  entities: {
+    memories: Memory[];
+    skills: Skill[];
+    knowledge: Knowledge[];
+    sessions: Session[];
+    profiles: Profile[];
+  };
+  accessCounts: Record<string, number>;
+}
+
+/**
+ * Export entities with optional filtering and pack metadata.
+ * Supports query-based filtering, tag filtering, and type filtering.
+ * Returns v2 pack format when pack metadata is provided, v1 otherwise.
+ *
+ * This feature was developed in MicroExpert to enable distributable
+ * Memory Packs — versioned JSON files solving the cold-start problem
+ * for new agent instances.
+ */
+export function exportFiltered(
+  storage: StorageEngine,
+  _searchEngine: SearchEngine,
+  accessTracker: AccessTracker,
+  filter?: ExportFilter,
+  pack?: PackMetadata,
+): PackExportData {
+  const memories: Memory[] = [];
+  const skills: Skill[] = [];
+  const knowledge: Knowledge[] = [];
+  const sessions: Session[] = [];
+  const profiles: Profile[] = [];
+  const accessCounts: Record<string, number> = {};
+
+  const typesFilter = filter?.types ? new Set(filter.types) : null;
+  const tagsFilter = filter?.tags?.map(t => t.toLowerCase());
+
+  // Walk all refs to collect live entities
+  const allRefs = storage.refs.listAll();
+  for (const refPath of allRefs) {
+    const ref = storage.refs.get(refPath);
+    if (!ref) continue;
+    const commit = storage.commits.read(ref.head);
+    if (commit.objectHash === 'TOMBSTONE') continue;
+    const obj = storage.objects.read(commit.objectHash);
+    const entity = obj.data as Entity;
+
+    // Type filter
+    if (typesFilter && !typesFilter.has(entity.type)) continue;
+
+    // Agent ID filter
+    if (filter?.agentId && 'agentId' in entity && entity.agentId !== filter.agentId) continue;
+
+    // User ID filter
+    if (filter?.userId && 'userId' in entity && entity.userId !== filter.userId) continue;
+
+    // Tag filter (entity must have ALL specified tags)
+    if (tagsFilter && tagsFilter.length > 0) {
+      const entityTags = 'tags' in entity ? (entity.tags as string[]).map(t => t.toLowerCase()) : [];
+      const hasAllTags = tagsFilter.every(t => entityTags.includes(t));
+      if (!hasAllTags) continue;
+    }
+
+    // Query filter (content must contain query terms)
+    if (filter?.query) {
+      const queryLower = filter.query.toLowerCase();
+      const contentLower = entity.content.toLowerCase();
+      const tagsStr = 'tags' in entity ? (entity.tags as string[]).join(' ').toLowerCase() : '';
+      if (!contentLower.includes(queryLower) && !tagsStr.includes(queryLower)) continue;
+    }
+
+    // Attach access count
+    const count = accessTracker.get(entity.id);
+    if (count > 0) accessCounts[entity.id] = count;
+
+    switch (entity.type) {
+      case 'memory': memories.push(entity); break;
+      case 'skill': skills.push(entity); break;
+      case 'knowledge': knowledge.push(entity); break;
+      case 'session': sessions.push(entity); break;
+      case 'profile': profiles.push(entity); break;
+    }
+  }
+
+  const totalCount = memories.length + skills.length + knowledge.length + sessions.length + profiles.length;
+
+  return {
+    version: pack ? PACK_VERSION : EXPORT_VERSION,
+    exportedAt: new Date().toISOString(),
+    agentId: filter?.agentId,
+    userId: filter?.userId,
+    count: totalCount,
+    pack,
+    entities: { memories, skills, knowledge, sessions, profiles },
+    accessCounts,
+  };
 }

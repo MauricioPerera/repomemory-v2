@@ -12,8 +12,8 @@ import { RepoMemoryEventBus, type EventName, type EventHandler } from './events.
 import { RecallEngine } from './recall/engine.js';
 import { runCleanup } from './cleanup.js';
 import type { CleanupOptions, CleanupReport } from './cleanup.js';
-import { exportData as runExport, importData as runImport } from './portability.js';
-import type { ExportData, ImportOptions, ImportReport } from './portability.js';
+import { exportData as runExport, importData as runImport, exportFiltered as runExportFiltered } from './portability.js';
+import type { ExportData, ImportOptions, ImportReport, ExportFilter, PackMetadata, PackExportData } from './portability.js';
 import type { RepoMemoryConfig } from './types/config.js';
 import type { AiProvider } from './types/ai.js';
 import type { SnapshotInfo, VerifyResult } from './types/results.js';
@@ -277,6 +277,15 @@ export class RepoMemory {
 
   export(): ExportData {
     return runExport(this.storage, this.accessTracker);
+  }
+
+  /**
+   * Export entities with optional filtering and pack metadata.
+   * Supports query-based filtering, tag filtering, type filtering, and agent/user scoping.
+   * Returns v2 pack format when pack metadata is provided.
+   */
+  exportFiltered(filter?: ExportFilter, pack?: PackMetadata): PackExportData {
+    return runExportFiltered(this.storage, this.searchEngine, this.accessTracker, filter, pack);
   }
 
   import(data: ExportData, options?: ImportOptions): ImportReport {

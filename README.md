@@ -680,7 +680,7 @@ Providers: `ollama` (default), `openai`, `anthropic`, `cloudflare`. The `--base-
 
 ## MCP Server
 
-RepoMemory includes a built-in [Model Context Protocol](https://modelcontextprotocol.io) server for LLM tool-use integrations. The server communicates via JSON-RPC 2.0 over stdio with Content-Length framing.
+RepoMemory includes a built-in [Model Context Protocol](https://modelcontextprotocol.io) server for LLM tool-use integrations. The server communicates via JSON-RPC 2.0 over stdio, supporting both Content-Length framing (standard MCP) and newline-delimited JSON for broad client compatibility.
 
 ### Running the MCP server
 
@@ -688,16 +688,24 @@ RepoMemory includes a built-in [Model Context Protocol](https://modelcontextprot
 repomemory-mcp --dir .repomemory
 ```
 
-### Configuring in your MCP client
+### Configuring in Claude Code
 
-Add to your MCP client configuration (e.g., Claude Desktop, Cursor, etc.):
+```bash
+claude mcp add repomemory -- repomemory-mcp --dir /path/to/.repomemory
+```
+
+> **Tip:** If installed globally (`npm i -g @rckflr/repomemory`), point directly to the binary. Avoid `npx` wrappers — they add startup latency and can interfere with stdio transport.
+
+### Configuring in Claude Desktop / Cursor
+
+Add to your MCP client configuration:
 
 ```json
 {
   "mcpServers": {
     "repomemory": {
-      "command": "npx",
-      "args": ["repomemory-mcp", "--dir", "/path/to/.repomemory"]
+      "command": "repomemory-mcp",
+      "args": ["--dir", "/path/to/.repomemory"]
     }
   }
 }
@@ -1195,6 +1203,15 @@ The TF-IDF index is cached to disk and updated incrementally — no full rebuild
 
 ## Changelog
 
+### v2.16.1
+
+**MCP stdio transport compatibility**
+
+- **Dual-mode stdio transport**: MCP server now supports both Content-Length framing (standard MCP) and newline-delimited JSON. Clients that send bare JSON lines (e.g., Claude Code) work without modification; clients that send Content-Length headers (e.g., Claude Desktop) continue to work as before.
+- **Response format**: `send()` now outputs newline-delimited JSON (`{json}\n`) instead of Content-Length framing, for maximum client compatibility.
+- **Process lifecycle**: The MCP server no longer exits when stdin closes. It stays alive until killed by `SIGTERM`/`SIGINT`, which is required for clients that perform health checks after initial connection (e.g., Claude Code).
+- **README**: Added Claude Code configuration instructions and updated MCP section to reflect dual-mode transport.
+
 ### v2.16.0
 
 **Context-Time Training (CTT) Framework**
@@ -1321,7 +1338,7 @@ The TF-IDF index is cached to disk and updated incrementally — no full rebuild
 
 **MCP Server, HTTP API, Export/Import, Middleware, Auto-Mining & Compact Prompts**
 
-- **MCP server** (`repomemory-mcp`): Full Model Context Protocol server over stdio with Content-Length framed JSON-RPC 2.0. Exposes 23 tools covering all CRUD operations, search, recall, mining, export/import, stats, and integrity verification. Handler logic is separated from transport for testability.
+- **MCP server** (`repomemory-mcp`): Full Model Context Protocol server over stdio with dual-mode JSON-RPC 2.0 (Content-Length framing + newline-delimited JSON fallback). Exposes 34 tools covering all CRUD operations, search, recall, mining, export/import, stats, and integrity verification. Handler logic is separated from transport for testability.
 - **HTTP API** (`repomemory-http`): Lightweight REST server using `node:http`. Reuses the MCP handler for all 23 tools. Endpoints: `GET /health`, `GET /tools`, `POST /tool/<name>`. CORS enabled.
 - **Export/Import** (`mem.export()`, `mem.import()`): Portable JSON serialization of all entities + access counts. Preserves original IDs on import. Options: `skipExisting` for merge mode. CLI: `repomemory export <file>`, `repomemory import <file> [--skip-existing]`.
 - **Middleware pipeline** (`mem.use()`): Register `beforeSave`/`beforeUpdate`/`beforeDelete` hooks for validation, transformation, or vetoing. Chain runs in order, short-circuits on cancel. New error code: `MIDDLEWARE_CANCELLED`.

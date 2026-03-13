@@ -107,6 +107,7 @@ Optional semantic search via `@huggingface/transformers` (EmbeddingGemma-300m, 3
 - **Prompt templates (v2.16.0)**: `src/recall/templates.ts` defines configurable templates controlling section order, headers, preamble, and per-collection weight multipliers. 4 built-in templates: `default`, `technical`, `support`, `rag_focused`. Templates resolved via `resolveTemplate()`. RecallEngine applies collection weight multipliers before score pooling. Do NOT change the weight normalization in `computeScore()` — template weights are applied externally as score multipliers.
 - **CTT Metrics (v2.16.0)**: `MetricsTracker` stores per-agent-per-day JSON in `{dir}/metrics/`. Tracks recall calls, hits, items returned, top scores, corrections, mining, unique queries. Lightweight — no entity/commit overhead. MCP tool `ctt_metrics` aggregates and returns daily trend + summary.
 - **MCP tool count (v2.16.0)**: 34 tools total. New tools: `memory_correct`, `recall_templates`, `ctt_metrics`. The `recall` tool now accepts optional `template` parameter.
+- **MCP dual-mode stdio (v2.16.1)**: `processBuffer()` tries Content-Length framing first, then falls back to newline-delimited JSON. `send()` outputs `json + '\n'` (no Content-Length header). Process stays alive via `setInterval` keepalive — `stdin.on('end')` flushes but does NOT exit. This is required for Claude Code compatibility.
 
 ### Key conventions
 

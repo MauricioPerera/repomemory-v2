@@ -131,7 +131,7 @@ function extractFewShotExamples(
   maxExamples: number,
 ): FewShotExample[] {
   const examples: FewShotExample[] = [];
-  const toolPattern = /\[(MCP|CALC|FETCH):\s/;
+  const toolPattern = /\[(MCP|CALC|FETCH|A2E):\s/;
 
   for (const { entity } of skills) {
     if (examples.length >= maxExamples) break;
@@ -153,7 +153,7 @@ function extractFewShotExamples(
 /** Derive a plausible user question from skill content and tags */
 function deriveQuestion(content: string, tags: string[]): string | null {
   // Try to extract text before the tool tag as the question context
-  const tagIdx = content.search(/\[(MCP|CALC|FETCH):\s/);
+  const tagIdx = content.search(/\[(MCP|CALC|FETCH|A2E):\s/);
   if (tagIdx <= 0) {
     // No leading text — generate from tags
     if (tags.length > 0) {

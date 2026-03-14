@@ -463,6 +463,91 @@ export const tools: ToolDef[] = [
       required: ['agentId'],
     },
   },
+  // -- A2E --
+  {
+    name: 'a2e_save_workflow',
+    description: 'Save a successful A2E workflow as a reusable skill memory. Failed workflows are saved as corrections with scoring boost. Optionally extracts API knowledge from ApiCall operations.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        agentId: { type: 'string', description: 'Agent identifier' },
+        userId: { type: 'string', description: 'User identifier' },
+        rawTag: { type: 'string', description: 'A2E tag content (e.g., "ApiCall GET https://...")' },
+        userQuery: { type: 'string', description: 'User query that triggered the workflow' },
+        success: { type: 'boolean', description: 'Whether the workflow succeeded (default: true)' },
+        errorMsg: { type: 'string', description: 'Error message (required if success=false)' },
+        result: { type: 'string', description: 'Execution result (used to extract API knowledge on success)' },
+        secrets: { type: 'object', description: 'Map of secret names to values for sanitization' },
+        extraTags: { type: 'array', items: { type: 'string' }, description: 'Additional tags' },
+      },
+      required: ['agentId', 'userId', 'rawTag', 'userQuery'],
+    },
+  },
+  {
+    name: 'a2e_recall_workflows',
+    description: 'Recall A2E workflow skills matching a query. Returns reusable workflow patterns saved from previous executions.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        agentId: { type: 'string', description: 'Agent identifier' },
+        userId: { type: 'string', description: 'User identifier' },
+        query: { type: 'string', description: 'Search query' },
+        limit: { type: 'number', description: 'Max results (default: 3)' },
+      },
+      required: ['agentId', 'userId', 'query'],
+    },
+  },
+  {
+    name: 'a2e_check_circuit',
+    description: 'Check A2E circuit breaker for an API host. Returns whether the circuit is open (too many recent errors) and the caller should skip execution.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        agentId: { type: 'string', description: 'Agent identifier' },
+        userId: { type: 'string', description: 'User identifier' },
+        rawTag: { type: 'string', description: 'A2E tag content containing a URL' },
+        threshold: { type: 'number', description: 'Error count threshold (default: 3)' },
+      },
+      required: ['agentId', 'userId', 'rawTag'],
+    },
+  },
+  {
+    name: 'a2e_ingest_knowledge',
+    description: 'Ingest A2E protocol documentation (primitives, JSONL format, workflow examples) into RepoMemory knowledge and skills. Teaches the LLM how to define valid A2E workflows. Safe to call repeatedly (deduplication).',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        agentId: { type: 'string', description: 'Agent identifier for knowledge scope' },
+      },
+      required: ['agentId'],
+    },
+  },
+  {
+    name: 'a2e_validate',
+    description: 'Validate an A2E JSONL workflow before execution. Attempts to fix common LLM mistakes (unquoted keys, trailing commas) then validates structure against the A2E spec. Returns validation errors and the fixed JSONL.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        workflow: { type: 'string', description: 'A2E workflow JSONL string to validate' },
+      },
+      required: ['workflow'],
+    },
+  },
+  {
+    name: 'a2e_recall',
+    description: 'Recall A2E context using the specialized a2e template. Returns workflows, API knowledge, errors (with correction boost), and few-shot examples — optimized for A2E workflow generation.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        agentId: { type: 'string', description: 'Agent identifier' },
+        userId: { type: 'string', description: 'User identifier' },
+        query: { type: 'string', description: 'Natural language query' },
+        maxItems: { type: 'number', description: 'Max context items (default: 20)' },
+        maxChars: { type: 'number', description: 'Max formatted chars (default: 8000)' },
+      },
+      required: ['agentId', 'userId', 'query'],
+    },
+  },
   // -- Neural --
   {
     name: 'neural_status',
@@ -849,6 +934,84 @@ export async function handleTool(mem: RepoMemory, name: string, args: Record<str
       const summary = MetricsTracker.summary(aggregated);
       const trend = tracker.getTrend(agentId, days);
       return { aggregated, summary, trend };
+    }
+
+    // A2E
+    case 'a2e_save_workflow': {
+      const { saveWorkflowSkill, saveWorkflowError, extractApiKnowledge } = await import('../a2e/index.js');
+      const agentId = requireString(args, 'agentId');
+      const userId = requireString(args, 'userId');
+      const rawTag = requireString(args, 'rawTag');
+      const userQuery = requireString(args, 'userQuery');
+      const success = optionalBoolean(args, 'success') ?? true;
+      const secrets = (args.secrets as Record<string, string>) ?? {};
+      const extraTags = optionalStringArray(args, 'extraTags') ?? [];
+
+      if (success) {
+        saveWorkflowSkill(mem, agentId, userId, rawTag, userQuery, secrets, extraTags);
+        const result = optionalString(args, 'result');
+        if (result) {
+          extractApiKnowledge(mem, agentId, userId, rawTag, result, secrets);
+        }
+        return { saved: true, type: 'workflow', userQuery };
+      } else {
+        const errorMsg = requireString(args, 'errorMsg');
+        saveWorkflowError(mem, agentId, userId, rawTag, errorMsg, userQuery, secrets);
+        return { saved: true, type: 'error', userQuery, errorMsg };
+      }
+    }
+    case 'a2e_recall_workflows': {
+      const { recallWorkflows } = await import('../a2e/index.js');
+      const workflows = recallWorkflows(
+        mem,
+        requireString(args, 'agentId'),
+        requireString(args, 'userId'),
+        requireString(args, 'query'),
+        optionalNumber(args, 'limit') ?? 3,
+      );
+      return { workflows, count: workflows.length };
+    }
+    case 'a2e_check_circuit': {
+      const { checkCircuitBreakerFromTag } = await import('../a2e/index.js');
+      const result = checkCircuitBreakerFromTag(
+        mem,
+        requireString(args, 'agentId'),
+        requireString(args, 'userId'),
+        requireString(args, 'rawTag'),
+        optionalNumber(args, 'threshold'),
+      );
+      if (!result) {
+        return { checked: false, message: 'No URL found in tag — circuit breaker not applicable.' };
+      }
+      return result;
+    }
+    case 'a2e_validate': {
+      const { validateWorkflow } = await import('../a2e/index.js');
+      return validateWorkflow(requireString(args, 'workflow'));
+    }
+    case 'a2e_ingest_knowledge': {
+      const { ingestA2EKnowledge } = await import('../a2e/index.js');
+      const result = ingestA2EKnowledge(mem, requireString(args, 'agentId'));
+      return result;
+    }
+    case 'a2e_recall': {
+      const agentId = requireString(args, 'agentId');
+      const userId = requireString(args, 'userId');
+      const query = requireString(args, 'query');
+      const ctx = mem.recall(agentId, userId, query, {
+        maxItems: optionalNumber(args, 'maxItems') ?? 20,
+        maxChars: optionalNumber(args, 'maxChars') ?? 8000,
+        template: 'a2e',
+        includeSharedSkills: true,
+        includeSharedKnowledge: true,
+      });
+      return {
+        formatted: ctx.formatted,
+        totalItems: ctx.totalItems,
+        estimatedChars: ctx.estimatedChars,
+        fewShotExamples: ctx.fewShotExamples ?? [],
+        profile: ctx.profile,
+      };
     }
 
     // Neural

@@ -355,3 +355,15 @@ export type { ExportData, ImportOptions, ImportReport } from './portability.js';
 export type { Middleware } from './middleware.js';
 export type { ScoringWeights } from './search/scoring.js';
 export type { NeuralConfig, NeuralStats, MatryoshkaEmbedding, CuratedItem, SimilarityResult } from './neural/types.js';
+
+// A2E integration
+export {
+  sanitizeSecrets, resolveSecrets, SENSITIVE_PARAMS,
+  checkCircuitBreaker, checkCircuitBreakerFromTag, extractHost,
+  saveWorkflowSkill, saveWorkflowError, extractApiKnowledge, recallWorkflows, parseWorkflowSkill, mineA2ePatterns,
+  ingestA2EKnowledge,
+  validateWorkflow, fixJsonl, normalizeResponse,
+} from './a2e/index.js';
+export type {
+  CircuitBreakerResult, IngestA2EKnowledgeResult, ValidationResult, ValidationError,
+} from './a2e/index.js';

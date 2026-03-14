@@ -104,7 +104,7 @@ describe('ingest', () => {
     ingestPath(mem, filePath, { agent: 'test-agent' });
 
     const stored = mem.knowledge.list('test-agent');
-    expect(stored[0].source).toMatch(/^[A-Z]:\\/i); // Windows absolute path
+    expect(stored[0].source).toMatch(/^(\/|[A-Z]:\\)/i); // Absolute path (Unix or Windows)
   });
 
   it('tags include source filename and chunk index', () => {

@@ -28,13 +28,13 @@ describe('Configurable dedup threshold', () => {
   it('uses default threshold (0.2) when not specified', () => {
     const repo = new RepoMemory({ dir: tmpDir });
     repo.memories.save('a1', 'u1', {
-      content: 'The database uses PostgreSQL version 15',
+      content: 'The database uses PostgreSQL version 15 for the main production server',
       tags: ['database'],
       category: 'fact',
     });
     // Very similar content — should dedup with default threshold
     const [, , meta] = repo.memories.saveOrUpdate('a1', 'u1', {
-      content: 'The database uses PostgreSQL version 16',
+      content: 'The database uses PostgreSQL version 16 for the main production server',
       tags: ['database'],
       category: 'fact',
     });

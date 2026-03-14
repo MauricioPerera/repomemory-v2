@@ -47,6 +47,7 @@ RepoMemory provides persistent, versioned memory for AI agents. Every change is 
 - **Context-Time Training (CTT)** — trains the agent, not the model. The agent accumulates knowledge from experience (mining), consolidates it over time, and corrects errors — while the model stays frozen. A trained agent with a 0.6B model outperforms an untrained agent with a 20B model. Includes correction boost, prompt templates, and effectiveness metrics
 - **Neural semantic search** — optional EmbeddingGemma-300m via `@huggingface/transformers` with Matryoshka 3-level ranking (128→256→768 dims). Cross-lingual, MMR diversity, fire-and-forget indexing
 - **Cloudflare Workers AI** — dedicated provider with OpenAI-compatible endpoints and AI Gateway support
+- **A2E protocol integration** — save/recall/mine [A2E](https://github.com/MauricioPerera/a2e) workflow patterns, circuit breaker for failing API hosts, secret sanitization before persistence, few-shot extraction of `[A2E: ...]` tags
 
 ## Install
 
@@ -711,13 +712,14 @@ Add to your MCP client configuration:
 }
 ```
 
-### Available Tools (34)
+### Available Tools (38)
 
 | Tool | Description |
 |------|-------------|
 | `memory_save` | Save a new memory |
 | `memory_search` | Search memories by text query |
 | `memory_save_or_update` | Save or update (dedup) a memory |
+| `memory_correct` | Save a correction that overrides incorrect memories |
 | `memory_list` | List all memories for agent/user |
 | `skill_save` | Save a new skill |
 | `skill_search` | Search skills by text query |
@@ -730,25 +732,28 @@ Add to your MCP client configuration:
 | `profile_save` | Save or update a user profile |
 | `profile_get` | Get a user's profile |
 | `recall` | Multi-collection context retrieval for LLM prompts |
+| `recall_templates` | List available prompt templates |
 | `entity_get` | Get any entity by ID |
 | `entity_delete` | Delete any entity by ID |
 | `entity_history` | Get commit history for an entity |
 | `mine` | Extract memories/skills/profile from a session (requires AI provider) |
 | `stats` | Get storage statistics |
 | `verify` | Run integrity check |
+| `export` | Export all entities as portable JSON |
+| `import` | Import entities from export payload |
+| `export_filtered` | Export with filtering and pack metadata |
 | `rag_ingest` | Ingest a file or directory into RAG knowledge |
 | `rag_query` | Query RAG knowledge with optional AI answer |
 | `rag_sync` | Sync a directory (detect changes, re-ingest) |
 | `rag_status` | Show RAG stats for an agent |
+| `ctt_metrics` | Get CTT quality metrics per agent |
 | `neural_status` | Check neural engine status and stats |
 | `neural_index` | Trigger neural indexing for a scope |
 | `neural_search` | Semantic search via embeddings |
-| `neural_similarity` | Find similar entities by ID |
-| `memory_correct` | Save a correction that overrides incorrect memories |
-| `recall_templates` | List available prompt templates |
-| `ctt_metrics` | Get CTT quality metrics per agent |
-| `export` | Export all entities as portable JSON |
-| `import` | Import entities from export payload |
+| `neural_similarity` | Compute semantic similarity between two texts |
+| `a2e_save_workflow` | Save an A2E workflow (success or failure) with secret sanitization |
+| `a2e_recall_workflows` | Recall matching A2E workflow patterns |
+| `a2e_check_circuit` | Check circuit breaker for an API host |
 
 ## HTTP API
 
@@ -977,6 +982,73 @@ CLOUDFLARE_ACCOUNT_ID=xxx CLOUDFLARE_API_TOKEN=yyy npx vitest run tests/ctt-benc
 OLLAMA_BASE_URL=http://localhost:11434 node tests/ctt-benchmark/run-ollama-benchmark.mjs gemma3:270m qwen3:0.6b
 ```
 
+## A2E Integration
+
+RepoMemory integrates the [A2E (Agent-to-Execution)](https://github.com/MauricioPerera/a2e) declarative workflow protocol. A2E defines 8 operations (ApiCall, FilterData, TransformData, Conditional, Loop, StoreData, Wait, MergeData) that agents execute via `[A2E: ...]` tags.
+
+### Workflow skills
+
+Successful A2E workflows are saved as reusable memories. Failed workflows are saved as corrections with the CTT correction boost (2x), preventing agents from repeating errors.
+
+```ts
+import { saveWorkflowSkill, saveWorkflowError, recallWorkflows } from '@rckflr/repomemory';
+
+// Save a successful workflow
+saveWorkflowSkill(repo, 'agent1', 'user1',
+  'ApiCall GET https://api.weather.com/v1/forecast?q=Madrid',
+  'What is the weather in Madrid?',
+  { API_KEY: 'secret123' }  // sanitized before saving
+);
+
+// Save a failed workflow (surfaces as correction)
+saveWorkflowError(repo, 'agent1', 'user1',
+  'ApiCall GET https://api.bad.com/v1',
+  'Timeout after 30s',
+  'Bad query'
+);
+
+// Recall matching workflows
+const skills = recallWorkflows(repo, 'agent1', 'user1', 'weather forecast');
+// => ['Para What is the weather in Madrid?: [A2E: ApiCall GET https://api.weather.com/v1/forecast?q=Madrid]']
+```
+
+### Secret sanitization
+
+Two-pass sanitization prevents credentials from being persisted in memory:
+
+1. **Known secrets** — exact values replaced with `{{VAR}}` placeholders
+2. **Heuristic** — common auth query params (`apikey`, `token`, `password`, `appid`, etc.) redacted automatically
+
+```ts
+import { sanitizeSecrets, resolveSecrets } from '@rckflr/repomemory';
+
+// Before execution: resolve placeholders
+const resolved = resolveSecrets('ApiCall GET https://api.example.com?appid={{API_KEY}}', { API_KEY: 'abc123' });
+
+// Before saving: sanitize secrets
+const safe = sanitizeSecrets('ApiCall GET https://api.example.com?appid=abc123', { API_KEY: 'abc123' });
+// => 'ApiCall GET https://api.example.com?appid={{API_KEY}}'
+```
+
+### Circuit breaker
+
+Prevents repeated calls to failing API hosts by counting `a2e-error` memories:
+
+```ts
+import { checkCircuitBreakerFromTag } from '@rckflr/repomemory';
+
+const result = checkCircuitBreakerFromTag(repo, 'agent1', 'user1', 'ApiCall GET https://api.bad.com/v1');
+if (result?.open) {
+  console.log(result.message); // "Circuit breaker open — api.bad.com has 3 recent errors..."
+}
+```
+
+### Few-shot extraction
+
+The RecallEngine recognizes `[A2E: ...]` tags in skills (alongside `[MCP:]`, `[CALC:]`, `[FETCH:]`), converting them to user/assistant conversation pairs for few-shot prompting. Activated via the `few_shot` template.
+
+For detailed API reference, see [docs/A2E_INTEGRATION.md](docs/A2E_INTEGRATION.md).
+
 ## Architecture
 
 ### Storage Layout
@@ -1084,12 +1156,18 @@ RepoMemory (facade)
 |   +-- scopeFromParts       Build scope string from type/agentId/userId
 |   +-- refBaseFromEntity    Build ref path prefix from entity
 |
++-- A2E Integration (src/a2e/)
+|   +-- sanitize.ts        Secret resolution ({{VAR}} → value) and sanitization (value → {{VAR}})
+|   +-- circuit-breaker.ts Error-count circuit breaker for API hosts (threshold: 3)
+|   +-- workflow-skills.ts Save/recall/parse/mine A2E workflow patterns
+|   +-- index.ts           Re-exports all A2E functions and types
+|
 +-- Portability
 |   +-- exportData         Collect all live entities + access counts as portable JSON
 |   +-- importData         Restore entities preserving IDs, re-index, restore access counts
 |
 +-- MCP Server (bin: repomemory-mcp)
-|   +-- handler.ts         Protocol logic: 34 tools, JSON-RPC dispatch (testable independently)
+|   +-- handler.ts         Protocol logic: 38 tools, JSON-RPC dispatch (testable independently)
 |   +-- mcp.ts             Stdio transport: Content-Length framing, buffer parsing
 |
 +-- HTTP Server (bin: repomemory-http)

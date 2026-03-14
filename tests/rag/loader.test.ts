@@ -34,7 +34,7 @@ describe('loader', () => {
       writeFileSync(filePath, 'content');
 
       const result = loadFile(filePath);
-      expect(result.filePath).toMatch(/^[A-Z]:\\/i); // Windows absolute path
+      expect(result.filePath).toMatch(/^(\/|[A-Z]:\\)/i); // Absolute path (Unix or Windows)
     });
 
     it('throws for non-existent file', () => {

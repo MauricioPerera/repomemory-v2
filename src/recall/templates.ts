@@ -118,6 +118,25 @@ export const BUILTIN_TEMPLATES: Record<string, PromptTemplate> = {
     maxFewShot: 3,
     preamble: 'Use the learned patterns below as examples to follow. Imitate the format and structure shown.',
   },
+
+  a2e: {
+    id: 'a2e',
+    name: 'A2E Workflow',
+    sectionOrder: ['skills', 'memories', 'knowledge', 'profile'],
+    sectionHeaders: {
+      skills: '## Examples (follow this format exactly)',
+      memories: '## Corrections & Context',
+      knowledge: '## Primitives Reference',
+    },
+    collectionWeights: {
+      memories: 1.5,
+      skills: 2.0,
+      knowledge: 1.0,
+    },
+    extractFewShot: true,
+    maxFewShot: 7,
+    preamble: 'Output ONLY valid A2E JSONL. One JSON object per line. LAST line MUST be beginExecution. Corrections (marked [CORRECTION]) indicate failed patterns — avoid them.',
+  },
 };
 
 /** Resolve a template by ID string or return a custom PromptTemplate object */

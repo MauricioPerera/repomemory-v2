@@ -2,10 +2,12 @@
  * A2E secret sanitization utilities.
  *
  * Prevents credentials from being persisted in memory when saving
- * A2E workflow patterns. Two layers of protection:
+ * A2E workflow patterns. Four layers of protection:
  *
  * 1. Known secrets (from config) — exact value replacement with {{VAR}} placeholders
- * 2. Heuristic — common auth query param names redacted automatically
+ * 2. Heuristic URL — common auth query param names redacted automatically
+ * 3. Heuristic JSON — sensitive keys in body/headers objects redacted
+ * 4. Heuristic patterns — values that look like tokens (sk-, Bearer, high entropy)
  *
  * Reference: A2E Protocol Specification v1.0.0
  * https://github.com/MauricioPerera/a2e
@@ -17,6 +19,23 @@ const SENSITIVE_PARAMS = new Set([
   'password', 'appid', 'app_key', 'client_secret', 'auth',
   'api-key', 'x-api-key', 'client_id', 'app_id',
 ]);
+
+/** JSON field names that typically contain credentials */
+const SENSITIVE_JSON_KEYS = new Set([
+  'authorization', 'api_key', 'apikey', 'api-key', 'x-api-key',
+  'token', 'access_token', 'secret', 'password', 'client_secret',
+  'auth_token', 'bearer', 'secret_key', 'private_key', 'signing_key',
+]);
+
+/** Value prefixes that indicate a credential */
+const CREDENTIAL_PREFIXES = [
+  'Bearer ', 'Basic ', 'Token ',
+  'sk-', 'pk-', 'rk-',       // OpenAI, Stripe, etc.
+  'ghp_', 'gho_', 'ghs_',    // GitHub
+  'xoxb-', 'xoxp-',          // Slack
+  'sk-ant-',                  // Anthropic
+  'eyJ',                      // JWT (base64 JSON)
+];
 
 /**
  * Resolve {{VAR}} placeholders in text using a secrets map.
@@ -84,8 +103,30 @@ export function sanitizeSecrets(text: string, secrets: Record<string, string>): 
     return changed ? `${base}?${newParams.join('&')}` : url;
   });
 
+  // Pass 3: Heuristic — redact sensitive JSON keys in body/headers
+  // Matches "key": "value" patterns where key is a known credential field
+  result = result.replace(/"([^"]+)"\s*:\s*"([^"]{4,})"/g, (match, key, val) => {
+    if (val.startsWith('{{')) return match; // already a placeholder
+    if (val.startsWith('/workflow/')) return match; // data path, not a secret
+    if (SENSITIVE_JSON_KEYS.has(key.toLowerCase())) {
+      return `"${key}":"{{${key.toUpperCase().replace(/[^A-Z0-9]/g, '_')}}}"`;
+    }
+    return match;
+  });
+
+  // Pass 4: Heuristic — redact values that look like credentials by prefix
+  for (const prefix of CREDENTIAL_PREFIXES) {
+    // Match the prefix followed by at least 8 non-whitespace/non-quote chars
+    const escaped = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`"(${escaped}[^"\\s]{8,})"`, 'g');
+    result = result.replace(re, (_, val) => {
+      if (val.startsWith('{{')) return `"${val}"`;
+      return `"{{REDACTED_${prefix.replace(/[^A-Za-z]/g, '').toUpperCase()}}}"`;
+    });
+  }
+
   return result;
 }
 
 /** Exported for testing */
-export { SENSITIVE_PARAMS };
+export { SENSITIVE_PARAMS, SENSITIVE_JSON_KEYS, CREDENTIAL_PREFIXES };

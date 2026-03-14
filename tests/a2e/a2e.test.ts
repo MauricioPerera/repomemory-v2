@@ -76,6 +76,72 @@ describe('A2E Sanitize', () => {
       const result = sanitizeSecrets('key=abc', { K: 'abc' });
       expect(result).toBe('key=abc');
     });
+
+    it('redacts sensitive keys in JSON body', () => {
+      const input = '{"body":{"api_key":"real_secret_value_here","name":"John"}}';
+      const result = sanitizeSecrets(input, {});
+      expect(result).toContain('{{API_KEY}}');
+      expect(result).not.toContain('real_secret_value_here');
+      expect(result).toContain('"name":"John"');
+    });
+
+    it('redacts Authorization header value', () => {
+      const input = '{"headers":{"Authorization":"Bearer sk-abc123456789xyz","Content-Type":"application/json"}}';
+      const result = sanitizeSecrets(input, {});
+      expect(result).not.toContain('sk-abc123456789xyz');
+      expect(result).toContain('application/json');
+    });
+
+    it('redacts values with known credential prefixes', () => {
+      // Use a non-sensitive key so pass 3 doesn't catch it, testing pass 4 specifically
+      const input = '{"custom_field":"ghp_1234567890abcdefghijklmnop"}';
+      const result = sanitizeSecrets(input, {});
+      expect(result).not.toContain('ghp_1234567890abcdefghijklmnop');
+      expect(result).toContain('REDACTED');
+    });
+
+    it('redacts token key via JSON key heuristic', () => {
+      const input = '{"token":"some_real_secret_value_12345"}';
+      const result = sanitizeSecrets(input, {});
+      expect(result).not.toContain('some_real_secret_value_12345');
+      expect(result).toContain('{{TOKEN}}');
+    });
+
+    it('redacts JWT tokens (eyJ prefix)', () => {
+      const input = '{"auth":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.payload.signature"}';
+      const result = sanitizeSecrets(input, {});
+      expect(result).not.toContain('eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9');
+    });
+
+    it('does not redact /workflow/ paths in JSON', () => {
+      const input = '{"inputPath":"/workflow/users","outputPath":"/workflow/filtered"}';
+      const result = sanitizeSecrets(input, {});
+      expect(result).toContain('/workflow/users');
+      expect(result).toContain('/workflow/filtered');
+    });
+
+    it('does not redact already-placeholdered JSON values', () => {
+      const input = '{"api_key":"{{MY_SECRET}}"}';
+      const result = sanitizeSecrets(input, {});
+      expect(result).toContain('{{MY_SECRET}}');
+    });
+
+    it('handles combined URL + body + header secrets', () => {
+      const input = [
+        '{"type":"operationUpdate","operationId":"fetch","operation":{"ApiCall":{',
+        '"method":"POST",',
+        '"url":"https://api.example.com/data?token=url_secret_123",',
+        '"headers":{"Authorization":"Bearer sk-proj-realtoken12345678"},',
+        '"body":{"client_secret":"body_secret_value_here"},',
+        '"outputPath":"/workflow/result"',
+        '}}}',
+      ].join('');
+      const result = sanitizeSecrets(input, {});
+      expect(result).not.toContain('url_secret_123');
+      expect(result).not.toContain('sk-proj-realtoken12345678');
+      expect(result).not.toContain('body_secret_value_here');
+      expect(result).toContain('/workflow/result');
+    });
   });
 
   describe('SENSITIVE_PARAMS', () => {

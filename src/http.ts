@@ -88,7 +88,7 @@ const server = createServer(async (req, res) => {
 
     // GET /health — health check
     if (url === '/health' && req.method === 'GET') {
-      jsonResponse(res, 200, { status: 'ok', dir, version: '2.16.0' });
+      jsonResponse(res, 200, { status: 'ok', dir, version: '2.19.0' });
       return;
     }
 

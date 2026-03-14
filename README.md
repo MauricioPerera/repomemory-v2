@@ -47,7 +47,7 @@ RepoMemory provides persistent, versioned memory for AI agents. Every change is 
 - **Context-Time Training (CTT)** — trains the agent, not the model. The agent accumulates knowledge from experience (mining), consolidates it over time, and corrects errors — while the model stays frozen. A trained agent with a 0.6B model outperforms an untrained agent with a 20B model. Includes correction boost, prompt templates, and effectiveness metrics
 - **Neural semantic search** — optional EmbeddingGemma-300m via `@huggingface/transformers` with Matryoshka 3-level ranking (128→256→768 dims). Cross-lingual, MMR diversity, fire-and-forget indexing
 - **Cloudflare Workers AI** — dedicated provider with OpenAI-compatible endpoints and AI Gateway support
-- **A2E protocol integration** — save/recall/mine [A2E](https://github.com/MauricioPerera/a2e) workflow patterns, circuit breaker for failing API hosts, secret sanitization before persistence, few-shot extraction of `[A2E: ...]` tags
+- **A2E protocol integration** — save/recall/mine [A2E](https://github.com/MauricioPerera/a2e) workflow patterns, three-stage validation pipeline (normalize → fix → validate with auto-beginExecution), circuit breaker for failing API hosts, 4-layer secret sanitization (known values + URL params + JSON keys + credential prefixes), few-shot extraction of `[A2E: ...]` tags. Tested across 11 models (1B to 120B) — see [CTT Research Report](docs/CTT_RESEARCH_REPORT.md)
 
 ## Install
 
@@ -712,7 +712,7 @@ Add to your MCP client configuration:
 }
 ```
 
-### Available Tools (38)
+### Available Tools (41)
 
 | Tool | Description |
 |------|-------------|
@@ -754,6 +754,9 @@ Add to your MCP client configuration:
 | `a2e_save_workflow` | Save an A2E workflow (success or failure) with secret sanitization |
 | `a2e_recall_workflows` | Recall matching A2E workflow patterns |
 | `a2e_check_circuit` | Check circuit breaker for an API host |
+| `a2e_ingest_knowledge` | Ingest A2E protocol documentation as knowledge entries |
+| `a2e_validate` | Validate A2E JSONL workflow (normalize + fix + validate + auto-beginExecution) |
+| `a2e_recall` | Recall context optimized for A2E workflow generation (uses `a2e` template) |
 
 ## HTTP API
 
@@ -1280,6 +1283,38 @@ The TF-IDF index is cached to disk and updated incrementally — no full rebuild
 | Fire-and-forget neural indexing | Embedding latency (~10-50ms) would block synchronous saves. Detached promise keeps save path fast; stale embeddings self-correct on next save |
 
 ## Changelog
+
+### v2.19.0
+
+**A2E Validation Pipeline + CTT Research (11 models)**
+
+- **Three-stage validation pipeline** (`src/a2e/validate.ts`): `normalizeResponse()` strips `<think>` tags, collapses pretty-printed JSON, extracts from code blocks, reorders misplaced beginExecution. `fixJsonl()` now repairs truncated JSON by counting and closing unmatched braces. `validateWorkflow()` auto-synthesizes missing `beginExecution` from defined operationIds (returns `autoFixed: true`).
+- **Enhanced secret sanitization**: Two new passes — redacts sensitive JSON keys in body/headers (`authorization`, `api_key`, `token`, `client_secret`) and values with credential prefixes (`Bearer`, `sk-`, `ghp_`, `eyJ`/JWT, `xoxb-`/Slack).
+- **CTT research across 11 models** (1B to 120B): Tested granite, gpt-oss-20b/120b, qwq-32b, qwen2.5-coder, gemma-7b/2b, llama-3.2-1b/3b, nemotron MoE. Full results in `docs/CTT_RESEARCH_REPORT.md`.
+- **Unified `a2e` recall template**: Skills-first ordering (2.0x weight), 7 few-shot examples, direct preamble. One template serves all model sizes — clear instructions help small models without hurting large ones.
+- **Post-optimization results**: Pipeline fixes dropped the convergence floor from ~3B to ~1B. A 1B model now produces valid A2E workflows on first attempt (previously did not converge in 5 iterations).
+- **41 MCP tools** total (3 new: `a2e_ingest_knowledge`, `a2e_validate`, `a2e_recall`).
+
+### v2.18.0
+
+**A2E Protocol Integration**
+
+- **A2E module** (`src/a2e/`): Integrates the [A2E (Agent-to-Execution)](https://github.com/MauricioPerera/a2e) protocol into RepoMemory's knowledge and memory system.
+- **Knowledge ingestion** (`knowledge.ts`): 8 primitive docs + JSONL format as knowledge entries, 7 workflow examples as skills. `ingestA2EKnowledge()` with source-based dedup.
+- **Secret sanitization** (`sanitize.ts`): Two-pass approach — known secrets replaced with `{{VAR}}` placeholders, heuristic detection of sensitive URL query params.
+- **Circuit breaker** (`circuit-breaker.ts`): Counts `a2e-error` correction memories per API host, blocks requests at configurable threshold.
+- **Workflow skills** (`workflow-skills.ts`): Save/recall/parse/mine A2E workflow patterns. Success → `fact` category, failure → `correction` with 2x scoring boost.
+- **RecallEngine**: Few-shot extraction recognizes `[A2E: ...]` tags in skills, converts to user/assistant conversation pairs.
+- **38 MCP tools** total (3 new: `a2e_save_workflow`, `a2e_recall_workflows`, `a2e_check_circuit`). See `docs/A2E_INTEGRATION.md`.
+
+### v2.17.0
+
+**Few-Shot Extraction + Memory Packs**
+
+- **Few-shot extraction**: Skills containing tool-calling patterns (`[MCP: ...]`, `[CALC: ...]`, `[FETCH: ...]`, `[A2E: ...]`) are converted to user/assistant conversation pairs by `RecallEngine`. Activated via `few_shot` template or custom templates with `extractFewShot: true`. `recall` tool now returns `fewShotExamples` in response.
+- **Memory Packs / Filtered export**: `exportFiltered()` supports query, tags, types, agentId, and userId filtering. Returns v2 pack format (`version: 2`) with optional `PackMetadata` for distributable versioned JSON files. New MCP tool: `export_filtered`.
+- **`few_shot` template**: Built-in template with skills 2.0x weight, 3 few-shot examples, and imitation-based preamble. Designed for sub-1B models.
+- **36 MCP tools** total (1 new: `export_filtered`).
 
 ### v2.16.1
 

@@ -1095,7 +1095,7 @@ export async function handleTool(mem: RepoMemory, name: string, args: Record<str
 
 const SERVER_INFO = {
   name: 'repomemory',
-  version: '2.17.0',
+  version: '2.19.0',
 };
 
 const CAPABILITIES = {
